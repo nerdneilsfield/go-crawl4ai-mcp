@@ -110,11 +110,15 @@ func MarkdownString(raw json.RawMessage) string {
 	}
 	var obj struct {
 		RawMarkdown           string `json:"raw_markdown"`
-		MarkdownWithCitations string `json:"markdown_with_citation_links"`
+		MarkdownWithCitations string `json:"markdown_with_citations"`
+		FitMarkdown           string `json:"fit_markdown"`
 	}
 	if json.Unmarshal(raw, &obj) == nil {
 		if obj.RawMarkdown != "" {
 			return obj.RawMarkdown
+		}
+		if obj.FitMarkdown != "" {
+			return obj.FitMarkdown
 		}
 		return obj.MarkdownWithCitations
 	}

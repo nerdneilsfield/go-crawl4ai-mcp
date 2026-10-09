@@ -356,6 +356,13 @@ func askTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, askIn) 
 			}
 			sb.WriteString(resp.DocContext)
 		}
+		// With a query the upstream returns scored chunks instead of raw contexts.
+		for _, chunk := range resp.CodeResults {
+			appendChunk(&sb, "code", chunk)
+		}
+		for _, chunk := range resp.DocResults {
+			appendChunk(&sb, "doc", chunk)
+		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: sb.String()}}}, any(nil), nil
 	}
 }
@@ -408,4 +415,12 @@ func pick(v, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func appendChunk(sb *strings.Builder, kind string, c c4a.AskChunk) {
+	if sb.Len() > 0 {
+		sb.WriteString("\n\n")
+	}
+	fmt.Fprintf(sb, "[%s score=%v]\n", kind, c.Score)
+	sb.WriteString(c.Text)
 }

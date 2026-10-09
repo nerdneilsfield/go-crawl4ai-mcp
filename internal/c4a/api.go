@@ -162,9 +162,20 @@ func (c *Client) ExecuteJS(ctx context.Context, req ExecuteJSRequest) (*CrawlRes
 
 // ---------- GET /ask ----------
 
+// AskChunk is one BM25-scored chunk when a query was provided.
+type AskChunk struct {
+	Text  string  `json:"text"`
+	Score float64 `json:"score"`
+}
+
+// AskResponse has two shapes: without a query the upstream returns the raw
+// contexts (code_context/doc_context); with a query it returns scored chunks
+// (code_results/doc_results) instead.
 type AskResponse struct {
-	CodeContext string `json:"code_context,omitempty"`
-	DocContext  string `json:"doc_context,omitempty"`
+	CodeContext string     `json:"code_context,omitempty"`
+	DocContext  string     `json:"doc_context,omitempty"`
+	CodeResults []AskChunk `json:"code_results,omitempty"`
+	DocResults  []AskChunk `json:"doc_results,omitempty"`
 }
 
 func (c *Client) Ask(ctx context.Context, query, contextType string, scoreRatio float64, maxResults int) (*AskResponse, error) {
