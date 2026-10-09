@@ -12,7 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/dengqi/go-crawl4ai-mcp/internal/c4a"
+	"github.com/nerdneilsfield/go-crawl4ai-mcp/internal/c4a"
 )
 
 // Options configures the MCP server.

@@ -12,7 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/dengqi/go-crawl4ai-mcp/internal/server"
+	"github.com/nerdneilsfield/go-crawl4ai-mcp/internal/server"
 )
 
 var version = "0.1.0"

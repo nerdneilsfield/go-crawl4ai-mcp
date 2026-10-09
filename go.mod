@@ -1,4 +1,4 @@
-module github.com/dengqi/go-crawl4ai-mcp
+module github.com/nerdneilsfield/go-crawl4ai-mcp
 
 go 1.25.0
 

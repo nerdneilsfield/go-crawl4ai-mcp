@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dengqi/go-crawl4ai-mcp/internal/c4a"
+	"github.com/nerdneilsfield/go-crawl4ai-mcp/internal/c4a"
 )
 
 // summarizeCrawl must preserve per-page failures even when the upstream
