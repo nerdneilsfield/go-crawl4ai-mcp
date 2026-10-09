@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
@@ -19,7 +20,6 @@ import (
 
 	"github.com/nerdneilsfield/go-crawl4ai-mcp/internal/appconfig"
 	"github.com/nerdneilsfield/go-crawl4ai-mcp/internal/server"
-	"github.com/nerdneilsfield/go-crawl4ai-mcp/internal/supervisor"
 )
 
 var version = "0.1.0"
@@ -148,7 +148,7 @@ func run(cmd *cobra.Command, cfg *config) error {
 	mux.Handle("/mcp", bearerAuth(cfg.mcpToken, handler))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok","version":%q,"generation":%q}`, version, envOr("RESTART_GEN", "0"))
+		fmt.Fprintf(w, `{"status":"ok","version":%q}`, version)
 	})
 
 	httpSrv := &http.Server{
@@ -158,33 +158,17 @@ func run(cmd *cobra.Command, cfg *config) error {
 		// No WriteTimeout: tool calls proxy long browser crawls.
 	}
 
-	// Listener: inherit from a restarting parent when present, else bind.
-	var (
-		ln        net.Listener
-		readyFile *os.File
-	)
-	if lFile, ready, ierr := supervisor.Inherit(); ierr != nil {
-		return ierr
-	} else if lFile != nil {
-		defer lFile.Close()
-		readyFile = ready
-		if ready != nil {
-			defer ready.Close()
-		}
-		ln, err = net.FileListener(lFile)
-		if err != nil {
-			return fmt.Errorf("inheriting listener: %w", err)
-		}
-		log.Info("inherited listener from parent", zap.String("addr", ln.Addr().String()))
-	} else {
-		ln, err = net.Listen("tcp", cfg.addr)
-		if err != nil {
-			return err
-		}
+	ln, err := net.Listen("tcp", cfg.addr)
+	if err != nil {
+		return err
 	}
 
 	if cfg.mcpToken == "" {
-		log.Warn("MCP_TOKEN not set; /mcp is unauthenticated")
+		if !isLoopbackListener(ln) {
+			_ = ln.Close()
+			return fmt.Errorf("refusing to listen on %s without MCP_TOKEN: /mcp would be unauthenticated on a non-loopback interface; set MCP_TOKEN or bind to 127.0.0.1/localhost", cfg.addr)
+		}
+		log.Warn("MCP_TOKEN not set; /mcp is unauthenticated (loopback only)")
 	}
 	if cfg.searxngURL != "" {
 		log.Info("web_search enabled", zap.String("searxng", cfg.searxngURL))
@@ -194,42 +178,38 @@ func run(cmd *cobra.Command, cfg *config) error {
 		zap.String("upstream", cfg.baseURL),
 		zap.String("version", version))
 
-	// Child of a graceful restart: report readiness so the parent can exit.
-	if readyFile != nil {
-		if _, err := readyFile.Write([]byte("READY")); err != nil {
-			return fmt.Errorf("signaling readiness to parent: %w", err)
-		}
-	}
+	// SIGTERM/SIGINT: drain in-flight requests (Shutdown closes idle conns,
+	// waits for active ones), then exit 0. Under Docker the orchestrator's
+	// restart policy handles restarts; there is no in-process self-restart.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- httpSrv.Serve(ln) }()
 
-	serve := func() error {
-		err := httpSrv.Serve(ln)
+	select {
+	case err := <-serveErr:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return err
-	}
-	drain := func() {
+	case sig := <-stop:
+		log.Info("shutting down", zap.String("signal", sig.String()))
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
 		if err := httpSrv.Shutdown(ctx); err != nil {
 			log.Warn("shutdown drained with error", zap.Error(err))
 		}
-	}
-
-	err = supervisor.Serve(ln, serve, drain)
-	if errors.Is(err, supervisor.ErrRestart) {
-		log.Info("restart handoff complete; exiting")
 		return nil
 	}
-	return err
 }
 
-// hardExit is intentionally minimal: plain SIGINT/SIGTERM terminate the
-// process; graceful restarts go through the supervisor (SIGUSR1).
-var (
-	_ = os.Interrupt
-	_ = syscall.SIGTERM
-)
+// isLoopbackListener reports whether the listener only accepts loopback
+// connections (host part of the bound address is loopback or unspecified-but
+// localhost-style like "localhost:8080" resolved to 127.0.0.1).
+func isLoopbackListener(ln net.Listener) bool {
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	return ok && addr.IP.IsLoopback()
+}
 
 func main() {
 	if err := rootCmd().Execute(); err != nil {

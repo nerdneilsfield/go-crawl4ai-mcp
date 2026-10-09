@@ -45,6 +45,8 @@ func TestSearchParamsEncoding(t *testing.T) {
 }
 
 func TestSearchParsesResultsAndUnresponsive(t *testing.T) {
+	// Upstream shape: unresponsive_engines is a list of [engine, error]
+	// pairs (searx/webutils.py get_translated_errors).
 	_, cl := newStubServer(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{
 			"query": "fpga",
@@ -53,7 +55,8 @@ func TestSearchParsesResultsAndUnresponsive(t *testing.T) {
 				 "engines": ["brave", "duckduckgo"], "score": 1.5, "publishedDate": "2026-01-01"}
 			],
 			"unresponsive_engines": [
-				{"engine": "google", "error": "CAPTCHA"}
+				["brave", "too many requests"],
+				["google", "CAPTCHA"]
 			]
 		}`))
 	})
@@ -67,8 +70,14 @@ func TestSearchParsesResultsAndUnresponsive(t *testing.T) {
 	if resp.Results[0].Snippet != "An FPGA arch" {
 		t.Fatalf("snippet mapped from content: %+v", resp.Results[0])
 	}
-	if len(resp.UnresponsiveEngines) != 1 || resp.UnresponsiveEngines[0].Engine != "google" {
+	if len(resp.UnresponsiveEngines) != 2 {
 		t.Fatalf("unresponsive: %+v", resp.UnresponsiveEngines)
+	}
+	if resp.UnresponsiveEngines[0].Engine != "brave" || resp.UnresponsiveEngines[0].Error != "too many requests" {
+		t.Fatalf("pair[0]: %+v", resp.UnresponsiveEngines[0])
+	}
+	if resp.UnresponsiveEngines[1].Engine != "google" || resp.UnresponsiveEngines[1].Error != "CAPTCHA" {
+		t.Fatalf("pair[1]: %+v", resp.UnresponsiveEngines[1])
 	}
 	// Partial engine failure must not lose the results.
 	if len(resp.Results) == 0 {

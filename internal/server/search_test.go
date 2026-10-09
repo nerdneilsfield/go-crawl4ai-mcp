@@ -1,6 +1,7 @@
 package server
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,9 +35,11 @@ func serveMCP(t *testing.T, opts Options) func(body string) string {
 			t.Fatal(err)
 		}
 		defer resp.Body.Close()
-		buf := make([]byte, 1<<20)
-		n, _ := resp.Body.Read(buf)
-		return string(buf[:n])
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
 	}
 	post(`{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`)
 	return post

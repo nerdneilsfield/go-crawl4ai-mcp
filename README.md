@@ -31,7 +31,7 @@ MCP client ── MCP_TOKEN ──> go-crawl4ai-mcp :8080 ── CRAWL4AI_TOKEN 
    curl http://127.0.0.1:8080/health
    ```
 
-   `{"status":"ok","version":"…","generation":"0"}` confirms the process is serving. `generation` increments after each graceful restart.
+   `{"status":"ok","version":"…"}` confirms the process is serving.
 
 3. Connect an MCP client to `http://127.0.0.1:8080/mcp` with header `Authorization: Bearer letmein`, then call the `md` tool with a URL to confirm the full chain.
 
@@ -81,7 +81,7 @@ Command-line flags take precedence over environment variables.
 | `--enable-ask` | `ENABLE_ASK` | `true` | expose `ask` |
 | `--log-production` | `LOG_PRODUCTION` | `false` | JSON logs (zap production) instead of console format |
 
-Exit status is `0` on clean shutdown and after a graceful restart handoff, `1` on startup or runtime errors.
+Exit status is `0` on clean shutdown (SIGTERM/SIGINT drain in-flight requests, up to 25 s) and `1` on startup or runtime errors.
 
 ### SearXNG
 
@@ -101,18 +101,74 @@ SearXNG needs no authentication of its own: keep it on an internal network and l
 
 ## Client configuration
 
-Bifrost:
+All examples below connect to the Streamable HTTP endpoint at `http://<host>:8080/mcp` with `Authorization: Bearer $MCP_TOKEN`. Pick the section for your client; adjust the host and token.
+
+### Bifrost (`config.json`)
 
 ```json
 {
-  "type": "mcp",
-  "connection_type": "http",
-  "url": "http://my-host:8080/mcp",
-  "headers": { "Authorization": "Bearer letmein" }
+  "mcp": {
+    "client_configs": [
+      {
+        "name": "crawl4ai",
+        "connection_type": "http",
+        "connection_string": "http://my-host:8080/mcp",
+        "auth_type": "headers",
+        "headers": { "Authorization": "env.CRAWL4AI_MCP_AUTH" },
+        "tools_to_execute": ["*"]
+      }
+    ]
+  }
 }
 ```
 
-OpenCode:
+The `Authorization` value is resolved from the `CRAWL4AI_MCP_AUTH` environment variable on the Bifrost host; it must contain the full `Bearer letmein` string.
+
+### Codex CLI (`~/.codex/config.toml`)
+
+```toml
+[mcp_servers.crawl4ai]
+url = "http://127.0.0.1:8080/mcp"
+http_headers = { "Authorization" = "Bearer letmein" }
+```
+
+Or as JSON args in `~/.codex/mcp.json`-style entries for launchers that use `command` form:
+
+```json
+{
+  "mcpServers": {
+    "crawl4ai": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:8080/mcp", "--header", "Authorization: Bearer letmein"]
+    }
+  }
+}
+```
+
+Use the `mcp-remote` bridge when the client only speaks stdio.
+
+### Claude Code
+
+```sh
+claude mcp add --transport http crawl4ai http://127.0.0.1:8080/mcp \
+  --header "Authorization: Bearer letmein"
+```
+
+Or in `.mcp.json` at the project root:
+
+```json
+{
+  "mcpServers": {
+    "crawl4ai": {
+      "type": "http",
+      "url": "http://127.0.0.1:8080/mcp",
+      "headers": { "Authorization": "Bearer letmein" }
+    }
+  }
+}
+```
+
+### OpenCode
 
 ```json
 {
@@ -126,17 +182,49 @@ OpenCode:
 }
 ```
 
+### Claude Desktop
+
+Claude Desktop speaks stdio only; bridge with `mcp-remote` in `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "crawl4ai": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:8080/mcp", "--header", "Authorization: Bearer letmein"]
+    }
+  }
+}
+```
+
+### Cursor
+
+`~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "crawl4ai": {
+      "url": "http://127.0.0.1:8080/mcp",
+      "headers": { "Authorization": "Bearer letmein" }
+    }
+  }
+}
+```
+
+Or add via the Cursor UI: **Settings → MCP → Add new global MCP server**, type `HTTP`, URL `http://127.0.0.1:8080/mcp`, header `Authorization: Bearer letmein`.
+
 ## Behavior notes
 
 - **Protocol versions**: negotiates 2024-11-05 through 2026-07-28. Stateless mode means every POST is self-contained; GET/DELETE on `/mcp` return 405.
 - **Cancellation**: with the 2026-07-28 protocol, a client aborting its HTTP request cancels the in-flight upstream crawl immediately. With older protocol versions the MCP-level `notifications/cancelled` cannot reach the stateless handler, so an aborted call may run to completion on the upstream; the `--crawl-timeout` deadline (default 90 s) bounds that.
-- **Graceful restart**: sending `SIGUSR1` spawns a replacement process sharing the listening socket, waits for it to report readiness, drains in-flight requests via `http.Server.Shutdown`, then exits 0. The port stays open across the handoff. This serves binary/config reloads without an orchestrator-level rolling restart; it re-execs the current binary, so it cannot pick up a new binary path on disk by itself.
+- **Unauthenticated loopback mode**: with no `MCP_TOKEN`, the server refuses to bind a non-loopback address and exits 1. Bind `127.0.0.1` for local-only use, or set `MCP_TOKEN` to listen on all interfaces.
 - **Two independent credentials**: MCP clients authenticate to this server with `MCP_TOKEN`; this server authenticates to Crawl4AI with `CRAWL4AI_TOKEN`.
 
 ## Operations
 
-- Health check: `GET /health` — no auth, returns status, version, and restart generation.
-- Logs: console format by default; `--log-production` for JSON. Key events: startup (addr, upstream, timeout), restart handoff (pids, generation), drain completion.
+- Health check: `GET /health` — no auth, returns status and version.
+- Logs: console format by default; `--log-production` for JSON. Key events: startup (addr, upstream, timeout) and drain completion on shutdown.
 - Release: `goreleaser release` on a tag builds binaries for linux/darwin/windows (amd64/arm64) and pushes a multi-arch manifest to `ghcr.io/nerdneilsfield/go-crawl4ai-mcp` (tags: `vX.Y.Z`, `latest`). `goreleaser release --snapshot --skip=validate` builds locally without publishing.
 
 ## Development
@@ -145,4 +233,4 @@ OpenCode:
 go build ./... && go vet ./... && go test ./...
 ```
 
-Layout: `cmd/crawl4ai-mcp` (CLI, auth, wiring), `internal/c4a` (Crawl4AI REST client), `internal/searxng` (SearXNG client), `internal/server` (tool registration and result shaping), `internal/appconfig` (shared HTTP transports, logger), `internal/supervisor` (graceful restart).
+Layout: `cmd/crawl4ai-mcp` (CLI, auth, wiring), `internal/c4a` (Crawl4AI REST client), `internal/searxng` (SearXNG client), `internal/server` (tool registration and result shaping), `internal/appconfig` (shared HTTP transports, logger).

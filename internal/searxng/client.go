@@ -139,11 +139,7 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (*Response, erro
 			Score       float64  `json:"score"`
 			PublishedAt string   `json:"publishedDate"`
 		} `json:"results"`
-		UnresponsiveEngines []struct {
-			Engine    string `json:"engine"`
-			Error     string `json:"error"`
-			Exception string `json:"exception"`
-		} `json:"unresponsive_engines"`
+		UnresponsiveEngines []json.RawMessage `json:"unresponsive_engines"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("searxng: decoding response: %w", err)
@@ -157,11 +153,30 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (*Response, erro
 		})
 	}
 	for _, u := range raw.UnresponsiveEngines {
-		msg := u.Error
-		if msg == "" {
-			msg = u.Exception
+		if eng, msg, ok := parseUnresponsive(u); ok {
+			out.UnresponsiveEngines = append(out.UnresponsiveEngines, UnresponsiveEngine{Engine: eng, Error: msg})
 		}
-		out.UnresponsiveEngines = append(out.UnresponsiveEngines, UnresponsiveEngine{Engine: u.Engine, Error: msg})
 	}
 	return out, nil
+}
+
+// parseUnresponsive accepts the upstream pair form ("[\"google\",\"CAPTCHA\"]",
+// from get_translated_errors in searx/webutils.py) and an object form
+// ({"engine":..., "error":...}) for forward compatibility.
+func parseUnresponsive(raw json.RawMessage) (engine, msg string, ok bool) {
+	var pair []string
+	if json.Unmarshal(raw, &pair) == nil && len(pair) >= 1 {
+		if len(pair) >= 2 {
+			return pair[0], pair[1], true
+		}
+		return pair[0], "", true
+	}
+	var obj struct {
+		Engine string `json:"engine"`
+		Error  string `json:"error"`
+	}
+	if json.Unmarshal(raw, &obj) == nil && obj.Engine != "" {
+		return obj.Engine, obj.Error, true
+	}
+	return "", "", false
 }
