@@ -11,7 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
+
+	"github.com/nerdneilsfield/go-crawl4ai-mcp/internal/appconfig"
 )
 
 // Client talks to a SearXNG instance.
@@ -24,9 +25,8 @@ func (c *Client) httpClient() *http.Client {
 	if c.HC != nil {
 		return c.HC
 	}
-	// Search should fail fast relative to crawls; a dedicated client keeps
-	// this timeout independent from the Crawl4AI long-task behavior.
-	return &http.Client{Timeout: 15 * time.Second}
+	// Shared client: search must fail fast, independent of crawl timeouts.
+	return appconfig.SearchHTTPClient
 }
 
 // SearchRequest carries the /search query parameters this client supports.

@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/nerdneilsfield/go-crawl4ai-mcp/internal/appconfig"
 )
 
 // Client talks to a Crawl4AI Docker server's REST API.
@@ -23,7 +25,9 @@ func (c *Client) httpClient() *http.Client {
 	if c.HC != nil {
 		return c.HC
 	}
-	return http.DefaultClient
+	// Shared transport: keep-alive pooling tuned for a single upstream host.
+	// No overall timeout — crawls run long; cancellation rides the request ctx.
+	return appconfig.CrawlHTTPClient
 }
 
 // apiError is a non-2xx upstream response.
