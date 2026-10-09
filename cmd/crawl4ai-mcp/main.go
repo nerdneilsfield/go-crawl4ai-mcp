@@ -49,6 +49,7 @@ func main() {
 	baseURL := flag.String("crawl4ai-url", envOr("CRAWL4AI_URL", "http://127.0.0.1:11235"), "Crawl4AI server base URL")
 	c4aToken := flag.String("crawl4ai-token", os.Getenv("CRAWL4AI_TOKEN"), "Crawl4AI API token (CRAWL4AI_API_TOKEN equivalent)")
 	mcpToken := flag.String("mcp-token", os.Getenv("MCP_TOKEN"), "bearer token required by MCP clients; empty disables auth")
+	searxngURL := flag.String("searxng-url", os.Getenv("SEARXNG_URL"), "SearXNG base URL; registers the web_search tool when set (instance must enable the json format)")
 	flag.Parse()
 
 	srv, err := server.New(server.Options{
@@ -56,6 +57,7 @@ func main() {
 		Crawl4AIToken:   *c4aToken,
 		EnableExecuteJS: envOr("ENABLE_EXECUTE_JS", "") == "true",
 		EnableAsk:       envOr("ENABLE_ASK", "true") == "true",
+		SearXNGBaseURL:  strings.TrimRight(*searxngURL, "/"),
 	})
 	if err != nil {
 		log.Fatalf("building server: %v", err)
@@ -85,6 +87,9 @@ func main() {
 	}
 	if *mcpToken == "" {
 		log.Printf("warning: MCP_TOKEN not set; /mcp is unauthenticated")
+	}
+	if *searxngURL != "" {
+		log.Printf("web_search enabled via SearXNG at %s", *searxngURL)
 	}
 	log.Printf("crawl4ai-mcp %s listening on %s (upstream %s)", version, *addr, *baseURL)
 	log.Fatal(h.ListenAndServe())

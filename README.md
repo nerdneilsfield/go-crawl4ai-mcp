@@ -28,6 +28,7 @@ Mirrors the official Crawl4AI MCP tool names and semantics:
 | `ask` | `GET /ask` | Crawl4AI's own docs/code context (BM25); opt-out via `ENABLE_ASK=false` |
 | `submit_crawl` | `POST /crawl/job` | async job submission, returns `task_id` |
 | `get_crawl_job` | `GET /crawl/job/{id}` | poll job status/results |
+| `web_search` | SearXNG `GET /search` | optional; registered only when `SEARXNG_URL` is set. Titles/URLs/snippets only — follow up with `md`/`crawl` to read pages |
 
 Notes on result shapes (verified against `deploy/docker/server.py` 0.9.x):
 
@@ -54,6 +55,27 @@ Flags or environment variables:
 | `-mcp-token` | `MCP_TOKEN` | — | Bearer token for MCP clients; empty disables auth (dev only) |
 | | `ENABLE_EXECUTE_JS` | `false` | expose `execute_js` |
 | | `ENABLE_ASK` | `true` | expose `ask` |
+| `-searxng-url` | `SEARXNG_URL` | — | SearXNG base URL; registers `web_search` when set |
+
+### SearXNG
+
+Set `SEARXNG_URL` (e.g. `http://searxng:8080`) to add the `web_search` tool.
+The instance must enable the JSON API in its `settings.yml`, otherwise the
+tool reports a 403 hint:
+
+```yaml
+use_default_settings: true
+search:
+  formats:
+    - html
+    - json
+```
+
+Search returns up to 20 results (default 10) with title/URL/snippet/engines.
+Engine-level failures are surfaced in `unresponsive_engines` without dropping
+the successful results. The tool never auto-crawls results — the agent picks
+which URLs to read via `md`/`crawl`. SearXNG needs no auth of its own; keep it
+on the internal network and expose it through this server's `MCP_TOKEN`.
 
 ## Run
 

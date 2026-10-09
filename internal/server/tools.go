@@ -21,6 +21,7 @@ type Options struct {
 	Crawl4AIToken   string
 	EnableExecuteJS bool // upstream requires CRAWL4AI_EXECUTE_JS_ENABLED=true on its side
 	EnableAsk       bool
+	SearXNGBaseURL  string // when set, the web_search tool is registered
 }
 
 const (
@@ -89,6 +90,10 @@ func New(opts Options) (*mcp.Server, error) {
 		Name:        toolGetCrawlJob,
 		Description: "Poll an async crawl job submitted with submit_crawl. Returns status (processing/completed/failed) and the crawl results once completed.",
 	}, getCrawlJobTool(cl))
+
+	if opts.SearXNGBaseURL != "" {
+		addSearchTool(s, opts.SearXNGBaseURL)
+	}
 
 	return s, nil
 }
