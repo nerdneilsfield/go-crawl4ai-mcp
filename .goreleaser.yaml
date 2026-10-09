@@ -46,9 +46,9 @@ dockers_v2:
       - linux/amd64
       - linux/arm64
     # GitHub hosted runners use the plain docker buildx driver, which cannot
-    # produce attestations; disable the default SBOM/provenance flags.
-    build_flag_templates:
-      - "--sbom=false"
+    # produce attestations; disable SBOM and provenance.
+    sbom: false
+    flags:
       - "--provenance=false"
     labels:
       org.opencontainers.image.title: "{{.ProjectName}}"
