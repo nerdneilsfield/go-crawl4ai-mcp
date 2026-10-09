@@ -34,39 +34,22 @@ archives:
       - goos: windows
         formats: [zip]
 
-dockers:
-  - id: crawl4ai-mcp-linux-amd64
+dockers_v2:
+  - id: crawl4ai-mcp
     ids: [crawl4ai-mcp]
-    goos: linux
-    goarch: amd64
-    build_flag_templates:
-      - "--pull"
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--label=org.opencontainers.image.source={{.GitURL}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-    image_templates:
-      - "ghcr.io/nerdneilsfield/go-crawl4ai-mcp:{{ .Version }}"
-      - "ghcr.io/nerdneilsfield/go-crawl4ai-mcp:latest"
-    dockerfile: Dockerfile
-    use: buildx
-
-  - id: crawl4ai-mcp-linux-arm64
-    ids: [crawl4ai-mcp]
-    goos: linux
-    goarch: arm64
-    build_flag_templates:
-      - "--pull"
-      - "--platform=linux/arm64"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--label=org.opencontainers.image.source={{.GitURL}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-    image_templates:
-      - "ghcr.io/nerdneilsfield/go-crawl4ai-mcp:{{ .Version }}-arm64"
-    dockerfile: Dockerfile
-    use: buildx
+    images:
+      - ghcr.io/nerdneilsfield/go-crawl4ai-mcp
+    tags:
+      - "{{ .Version }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: "{{.ProjectName}}"
+      org.opencontainers.image.version: "{{.Version}}"
+      org.opencontainers.image.source: "{{.GitURL}}"
+      org.opencontainers.image.revision: "{{.FullCommit}}"
 
 checksum:
   name_template: "checksums.txt"
