@@ -1,0 +1,80 @@
+version: 2
+
+project_name: go-crawl4ai-mcp
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: crawl4ai-mcp
+    main: ./cmd/crawl4ai-mcp
+    binary: crawl4ai-mcp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: crawl4ai-mcp
+    ids: [crawl4ai-mcp]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ title .Os }}_{{ if eq .Arch "amd64" }}x86_64{{ else if eq .Arch "arm64" }}aarch64{{ else }}{{ .Arch }}{{ end }}
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+dockers:
+  - id: crawl4ai-mcp-linux-amd64
+    ids: [crawl4ai-mcp]
+    goos: linux
+    goarch: amd64
+    build_flag_templates:
+      - "--pull"
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+    image_templates:
+      - "ghcr.io/nerdneilsfield/go-crawl4ai-mcp:{{ .Version }}"
+      - "ghcr.io/nerdneilsfield/go-crawl4ai-mcp:latest"
+    dockerfile: Dockerfile
+    use: buildx
+
+  - id: crawl4ai-mcp-linux-arm64
+    ids: [crawl4ai-mcp]
+    goos: linux
+    goarch: arm64
+    build_flag_templates:
+      - "--pull"
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+    image_templates:
+      - "ghcr.io/nerdneilsfield/go-crawl4ai-mcp:{{ .Version }}-arm64"
+    dockerfile: Dockerfile
+    use: buildx
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
