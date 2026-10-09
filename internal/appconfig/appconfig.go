@@ -10,10 +10,14 @@ import (
 	"go.uber.org/zap"
 )
 
+// CrawlTimeout bounds each upstream Crawl4AI tool call. Default 90s;
+// configurable via --crawl-timeout / CRAWL_TIMEOUT (0 = unlimited).
+var CrawlTimeout = 90 * time.Second
+
 // CrawlHTTPClient is the shared client for upstream Crawl4AI calls.
-// No overall timeout: crawls legitimately run for minutes; cancellation is
-// carried by the MCP request context. Keep-alives are tuned for many calls
-// to a single upstream host.
+// No transport-level timeout: the per-call deadline is applied via context
+// (see CrawlTimeout) so cancellation still rides the MCP request context —
+// a client abort cancels immediately rather than waiting out the deadline.
 var CrawlHTTPClient = &http.Client{
 	Transport: &http.Transport{
 		Proxy: http.ProxyFromEnvironment,

@@ -51,6 +51,11 @@ func IsNotFound(err error) bool {
 
 // do sends a JSON request and decodes the JSON response into out (if non-nil).
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+	if appconfig.CrawlTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, appconfig.CrawlTimeout)
+		defer cancel()
+	}
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)

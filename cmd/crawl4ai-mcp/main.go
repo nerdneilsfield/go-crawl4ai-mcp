@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -24,14 +25,15 @@ import (
 var version = "0.1.0"
 
 type config struct {
-	addr       string
-	baseURL    string
-	c4aToken   string
-	mcpToken   string
-	searxngURL string
-	enableJS   bool
-	enableAsk  bool
-	production bool
+	addr         string
+	baseURL      string
+	c4aToken     string
+	mcpToken     string
+	searxngURL   string
+	enableJS     bool
+	enableAsk    bool
+	production   bool
+	crawlTimeout time.Duration
 }
 
 func envOr(key, def string) string {
@@ -48,6 +50,22 @@ func envBool(key string, def bool) bool {
 	default:
 		return false
 	}
+}
+
+func envDuration(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		// Also accept bare seconds for operator convenience (CRAWL_TIMEOUT=120).
+		if secs, serr := strconv.Atoi(v); serr == nil {
+			return time.Duration(secs) * time.Second
+		}
+		return def
+	}
+	return d
 }
 
 // bearerAuth rejects requests without a valid static bearer token.
@@ -90,6 +108,7 @@ func rootCmd() *cobra.Command {
 	pf.BoolVar(&cfg.enableJS, "enable-execute-js", envBool("ENABLE_EXECUTE_JS", false), "expose execute_js tool")
 	pf.BoolVar(&cfg.enableAsk, "enable-ask", envBool("ENABLE_ASK", true), "expose ask tool")
 	pf.BoolVar(&cfg.production, "log-production", envBool("LOG_PRODUCTION", false), "structured JSON logs instead of console")
+	pf.DurationVar(&cfg.crawlTimeout, "crawl-timeout", envDuration("CRAWL_TIMEOUT", 90*time.Second), "per-call upstream Crawl4AI timeout; 0 disables")
 	return cmd
 }
 
@@ -107,6 +126,12 @@ func run(cmd *cobra.Command, cfg *config) error {
 	})
 	if err != nil {
 		return fmt.Errorf("building server: %w", err)
+	}
+	appconfig.CrawlTimeout = cfg.crawlTimeout
+	if cfg.crawlTimeout > 0 {
+		log.Info("crawl timeout enabled", zap.Duration("timeout", cfg.crawlTimeout))
+	} else {
+		log.Info("crawl timeout disabled (unlimited)")
 	}
 
 	// Stateless streamable HTTP: each POST is self-contained, GET/DELETE
