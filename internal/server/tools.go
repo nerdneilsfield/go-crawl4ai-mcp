@@ -100,6 +100,8 @@ func New(opts Options) (*mcp.Server, error) {
 		Description: "Get the current date and time on the server, in a chosen IANA time zone (default UTC). Use when the agent needs to know today's date, now, or timezone-converted times.",
 	}, currentTimeTool())
 
+	addSitemapTool(s)
+
 	if opts.SearXNGBaseURL != "" {
 		addSearchTool(s, opts.SearXNGBaseURL)
 	}

@@ -44,6 +44,54 @@ docker run -p 8080:8080 -e MCP_TOKEN=letmein \
   ghcr.io/nerdneilsfield/go-crawl4ai-mcp:latest
 ```
 
+### Full stack with Docker Compose
+
+The compose file below brings up the three components together: Crawl4AI (the crawl engine), SearXNG (meta-search, JSON format pre-enabled), and this MCP server. Save it as `docker-compose.yml` and run `docker compose up -d`:
+
+```yaml
+services:
+  crawl4ai:
+    image: unclecode/crawl4ai:latest
+    restart: unless-stopped
+    shm_size: 1g # the headless browser needs it; smaller values crash on heavy pages
+    ports:
+      - "11235:11235"
+    environment:
+      CRAWL4AI_API_TOKEN: upstream-token # CRAWL4AI_TOKEN on the MCP server; 0.9.x binds loopback without one
+
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    volumes:
+      - ./searxng:/etc/searxng # must contain settings.yml with JSON format (below)
+
+  crawl4ai-mcp:
+    image: ghcr.io/nerdneilsfield/go-crawl4ai-mcp:latest
+    restart: unless-stopped
+    depends_on:
+      - crawl4ai
+      - searxng
+    ports:
+      - "8080:8080"
+    environment:
+      MCP_TOKEN: letmein # what your MCP client sends
+      CRAWL4AI_URL: http://crawl4ai:11235
+      CRAWL4AI_TOKEN: upstream-token
+      SEARXNG_URL: http://searxng:8080
+```
+
+SearXNG refuses JSON responses unless the format is enabled. Create `./searxng/settings.yml` before starting:
+
+```yaml
+use_default_settings: true
+search:
+  formats:
+    - html
+    - json
+```
+
+MCP clients connect to `http://<host>:8080/mcp` with `Authorization: Bearer letmein`. All three containers talk on the internal compose network; only :8080 needs to be reachable from the client (and :11235 if you want direct browser access to the Crawl4AI playground).
+
 ## Tools
 
 | Tool | Upstream | Enabled | Notes |
@@ -58,6 +106,7 @@ docker run -p 8080:8080 -e MCP_TOKEN=letmein \
 | `submit_crawl` | `POST /crawl/job` | default | async batch crawl; returns `task_id` |
 | `get_crawl_job` | `GET /crawl/job/{id}` | default | poll job status (`processing`/`completed`/`failed`) and results |
 | `current_time` | — (local) | default | current date/time in a chosen IANA time zone (default UTC): RFC3339, ISO week, weekday; useful for grounding "now" |
+| `sitemap_urls` | direct fetch | default | list URLs from a sitemap.xml, sitemapindex, plain-text list or robots.txt; discovery before reading |
 | `web_search` | SearXNG `GET /search` | URL set | title/URL/snippet only; see [SearXNG](#searxng) |
 
 `browser_config`, `crawler_config`, and `crawler_configs` (per-URL configs with `url_matcher`) are forwarded to `crawl` and `submit_crawl` as raw JSON, so the full CrawlerRunConfig surface stays available without this server re-implementing it.

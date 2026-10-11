@@ -1,0 +1,41 @@
+# Full stack: Crawl4AI + SearXNG + go-crawl4ai-mcp.
+# Usage:
+#   mkdir searxng && cat > searxng/settings.yml <<'YAML'
+#   use_default_settings: true
+#   search:
+#     formats:
+#       - html
+#       - json
+#   YAML
+#   docker compose up -d
+#
+# MCP clients connect to http://<host>:8080/mcp with Authorization: Bearer letmein.
+services:
+  crawl4ai:
+    image: unclecode/crawl4ai:latest
+    restart: unless-stopped
+    shm_size: 1g # the headless browser needs it; smaller values crash on heavy pages
+    ports:
+      - "11235:11235"
+    environment:
+      CRAWL4AI_API_TOKEN: upstream-token # 0.9.x binds loopback without one
+
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    volumes:
+      - ./searxng:/etc/searxng # settings.yml must enable the json format
+
+  crawl4ai-mcp:
+    image: ghcr.io/nerdneilsfield/go-crawl4ai-mcp:latest
+    restart: unless-stopped
+    depends_on:
+      - crawl4ai
+      - searxng
+    ports:
+      - "8080:8080"
+    environment:
+      MCP_TOKEN: letmein # what your MCP client sends
+      CRAWL4AI_URL: http://crawl4ai:11235
+      CRAWL4AI_TOKEN: upstream-token
+      SEARXNG_URL: http://searxng:8080
