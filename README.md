@@ -57,6 +57,7 @@ docker run -p 8080:8080 -e MCP_TOKEN=letmein \
 | `ask` | `GET /ask` | flag | BM25 search over Crawl4AI's own docs/source; disable with `--enable-ask=false`. Not a general web Q&A tool |
 | `submit_crawl` | `POST /crawl/job` | default | async batch crawl; returns `task_id` |
 | `get_crawl_job` | `GET /crawl/job/{id}` | default | poll job status (`processing`/`completed`/`failed`) and results |
+| `current_time` | — (local) | default | current date/time in a chosen IANA time zone (default UTC): RFC3339, ISO week, weekday; useful for grounding "now" |
 | `web_search` | SearXNG `GET /search` | URL set | title/URL/snippet only; see [SearXNG](#searxng) |
 
 `browser_config`, `crawler_config`, and `crawler_configs` (per-URL configs with `url_matcher`) are forwarded to `crawl` and `submit_crawl` as raw JSON, so the full CrawlerRunConfig surface stays available without this server re-implementing it.

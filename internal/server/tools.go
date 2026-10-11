@@ -9,8 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	_ "time/tzdata" // embed zoneinfo: distroless/static has no /usr/share/zoneinfo
 
 	"github.com/nerdneilsfield/go-crawl4ai-mcp/internal/c4a"
 )
@@ -34,6 +37,7 @@ const (
 	toolAsk         = "ask"
 	toolSubmitCrawl = "submit_crawl"
 	toolGetCrawlJob = "get_crawl_job"
+	toolCurrentTime = "current_time"
 )
 
 // New builds the MCP server with all tools registered.
@@ -90,6 +94,11 @@ func New(opts Options) (*mcp.Server, error) {
 		Name:        toolGetCrawlJob,
 		Description: "Poll an async crawl job submitted with submit_crawl. Returns status (processing/completed/failed) and the crawl results once completed.",
 	}, getCrawlJobTool(cl))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        toolCurrentTime,
+		Description: "Get the current date and time on the server, in a chosen IANA time zone (default UTC). Use when the agent needs to know today's date, now, or timezone-converted times.",
+	}, currentTimeTool())
 
 	if opts.SearXNGBaseURL != "" {
 		addSearchTool(s, opts.SearXNGBaseURL)
@@ -152,7 +161,23 @@ type getCrawlJobIn struct {
 	TaskID string `json:"task_id" jsonschema:"task id returned by submit_crawl"`
 }
 
+type currentTimeIn struct {
+	Timezone string `json:"timezone,omitempty" jsonschema:"IANA time zone name, e.g. Asia/Tokyo, America/New_York; default UTC"`
+}
+
 // ---------- outputs ----------
+
+type currentTimeOut struct {
+	Timezone   string `json:"timezone"`
+	Unix       int64  `json:"unix"`
+	RFC3339    string `json:"rfc3339"`
+	Human      string `json:"human"`
+	Date       string `json:"date"`
+	Time       string `json:"time"`
+	Weekday    string `json:"weekday"`
+	YearDay    int    `json:"day_of_year"`
+	WeekNumber int    `json:"iso_week"`
+}
 
 type mdOut struct {
 	Success  bool   `json:"success"`
@@ -198,6 +223,37 @@ type crawlJobOut struct {
 }
 
 // ---------- handlers ----------
+
+func currentTimeTool() func(context.Context, *mcp.CallToolRequest, currentTimeIn) (*mcp.CallToolResult, currentTimeOut, error) {
+	return func(_ context.Context, _ *mcp.CallToolRequest, in currentTimeIn) (*mcp.CallToolResult, currentTimeOut, error) {
+		loc := time.UTC
+		if in.Timezone != "" && !strings.EqualFold(in.Timezone, "utc") {
+			var err error
+			loc, err = time.LoadLocation(in.Timezone)
+			if err != nil {
+				return nil, currentTimeOut{}, fmt.Errorf("unknown time zone %q: %w (use an IANA name like Asia/Tokyo)", in.Timezone, err)
+			}
+		}
+		now := time.Now().In(loc)
+		return nil, currentTimeOut{
+			Timezone:   loc.String(),
+			Unix:       now.Unix(),
+			RFC3339:    now.Format(time.RFC3339),
+			Human:      now.Format("Monday, 2006-01-02 15:04:05 MST"),
+			Date:       now.Format("2006-01-02"),
+			Time:       now.Format("15:04:05"),
+			Weekday:    now.Weekday().String(),
+			YearDay:    now.YearDay(),
+			WeekNumber: isoWeek(now),
+		}, nil
+	}
+}
+
+// isoWeek returns the ISO 8601 week number of t.
+func isoWeek(t time.Time) int {
+	_, week := t.ISOWeek()
+	return week
+}
 
 func mdTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, mdIn) (*mcp.CallToolResult, mdOut, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in mdIn) (*mcp.CallToolResult, mdOut, error) {
