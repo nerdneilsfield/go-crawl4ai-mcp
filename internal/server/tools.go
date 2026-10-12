@@ -44,7 +44,7 @@ const (
 func New(opts Options) (*mcp.Server, error) {
 	cl := &c4a.Client{BaseURL: strings.TrimRight(opts.Crawl4AIBaseURL, "/"), Token: opts.Crawl4AIToken}
 
-	s := mcp.NewServer(&mcp.Implementation{Name: "crawl4ai-mcp", Version: "0.1.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "crawl4ai-mcp", Version: "0.1.1"}, nil)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        toolMD,
