@@ -51,7 +51,7 @@ func New(opts Options) (*mcp.Server, error) {
 		}
 	}
 
-	s := mcp.NewServer(&mcp.Implementation{Name: "crawl4ai-mcp", Version: "0.1.1"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "crawl4ai-mcp", Version: "0.2.0"}, nil)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        toolMD,

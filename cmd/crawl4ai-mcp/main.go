@@ -22,7 +22,7 @@ import (
 	"github.com/nerdneilsfield/go-crawl4ai-mcp/internal/server"
 )
 
-var version = "0.1.0"
+var version = "0.2.0"
 
 type config struct {
 	addr         string
