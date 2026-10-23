@@ -1,19 +1,19 @@
 # go-crawl4ai-mcp
 
-Stateless Streamable HTTP [MCP](https://modelcontextprotocol.io) server that exposes a self-hosted [Crawl4AI](https://github.com/unclecode/crawl4ai) Docker deployment as MCP tools, with an optional [SearXNG](https://docs.searxng.org) web search tool. Built on the official Go MCP SDK and the standard library; no database, no scheduler, no second port.
+Stateless Streamable HTTP [MCP](https://modelcontextprotocol.io) server that exposes a self-hosted [Crawl4AI](https://github.com/unclecode/crawl4ai) Docker deployment as MCP tools, with an optional web search tool backed by [DeepSeek Search](https://api-docs.deepseek.com/guides/search/) or [SearXNG](https://docs.searxng.org). Built on the official Go MCP SDK and the standard library; no database, no scheduler, no second port.
 
 It exists because Crawl4AI's built-in MCP bridge (`deploy/docker/mcp_bridge.py`) speaks legacy SSE, which several modern MCP clients handle poorly. This server speaks Streamable HTTP instead: stateless, JSON responses, one endpoint.
 
 ```
 MCP client ── MCP_TOKEN ──> go-crawl4ai-mcp :8080 ── CRAWL4AI_TOKEN ──> Crawl4AI :11235
-                                   └── (optional) SearXNG ──> web_search tool
+                                   └── (optional) DeepSeek Search / SearXNG ──> web_search tool
 ```
 
 ## Requirements
 
 - Go 1.26+ to build from source, or Docker.
 - A running Crawl4AI server (0.9.x) with its REST API reachable. The upstream container must set `CRAWL4AI_API_TOKEN` if you want authenticated upstream calls.
-- Optional: a SearXNG instance with the JSON output format enabled.
+- Optional, for `web_search`: a DeepSeek API key, or a SearXNG instance with the JSON output format enabled.
 
 ## Quick start
 
@@ -129,7 +129,7 @@ The startup log tells you it worked: a `downloading geo database` line the first
 | `get_crawl_job` | `GET /crawl/job/{id}` | default | poll job status (`processing`/`completed`/`failed`) and results |
 | `current_time` | — (local) | default | current date/time in a chosen IANA time zone (default UTC): RFC3339, ISO week, weekday; useful for grounding "now" |
 | `sitemap_urls` | direct fetch | default | list URLs from a sitemap.xml, sitemapindex, plain-text list or robots.txt; discovery before reading |
-| `web_search` | SearXNG `GET /search` | URL set | title/URL/snippet only; see [SearXNG](#searxng) |
+| `web_search` | DeepSeek `POST /v1/tools/search` or SearXNG `GET /search` | key or URL set | title/URL/snippet (DeepSeek adds summary and rerank score); see [Search providers](#search-providers) |
 
 `browser_config`, `crawler_config`, and `crawler_configs` (per-URL configs with `url_matcher`) are forwarded to `crawl` and `submit_crawl` as raw JSON, so the full CrawlerRunConfig surface stays available without this server re-implementing it.
 
@@ -148,8 +148,10 @@ Command-line flags take precedence over environment variables.
 | `--crawl4ai-token` | `CRAWL4AI_TOKEN` | empty | Crawl4AI API token (the upstream's `CRAWL4AI_API_TOKEN`); empty sends no auth |
 | `--route-config` | `ROUTE_CONFIG` | empty | YAML file that routes URLs to several Crawl4AI backends ([see below](#routing-to-several-crawl4ai-backends)); when set, `--crawl4ai-url`/`--crawl4ai-token` are ignored |
 | `--mcp-token` | `MCP_TOKEN` | empty | Bearer token required from MCP clients; empty disables auth (dev/loopback only) |
-| `--crawl-timeout` | `CRAWL_TIMEOUT` | `90s` | per-call upstream timeout. Accepts Go durations (`2m`) or bare seconds (`120`); `0` disables. Applies to Crawl4AI calls only, not SearXNG |
-| `--searxng-url` | `SEARXNG_URL` | empty | SearXNG base URL; setting it registers `web_search` |
+| `--crawl-timeout` | `CRAWL_TIMEOUT` | `90s` | per-call upstream timeout. Accepts Go durations (`2m`) or bare seconds (`120`); `0` disables. Applies to Crawl4AI calls only, not web search |
+| `--searxng-url` | `SEARXNG_URL` | empty | SearXNG base URL; enables the SearXNG backend of `web_search` |
+| `--deepseek-api-key` | `DEEPSEEK_API_KEY` | empty | DeepSeek Search API key; enables the DeepSeek backend of `web_search` |
+| `--search-provider` | `SEARCH_PROVIDER` | `auto` | `web_search` backend: `auto`, `deepseek` or `searxng` ([see below](#search-providers)) |
 | `--enable-execute-js` | `ENABLE_EXECUTE_JS` | `false` | expose `execute_js` |
 | `--enable-ask` | `ENABLE_ASK` | `true` | expose `ask` |
 | `--log-production` | `LOG_PRODUCTION` | `false` | JSON logs (zap production) instead of console format |
@@ -241,6 +243,27 @@ search:
 `web_search` parameters: `query` (required), `max_results` (default 10, hard cap 20 — truncation of the current result page, not a guarantee), `language`, `categories` (`general`, `news`, `science`, …), `time_range` (`day`/`week`/`month`/`year`), `page`. Results keep SearXNG's ranking and include `engines` and `publishedDate` when present. Engines that time out or get rate-limited are listed in `unresponsive_engines` alongside whatever results succeeded.
 
 SearXNG needs no authentication of its own: keep it on an internal network and let this server's `MCP_TOKEN` be the only public credential.
+
+### Search providers
+
+`web_search` has two backends, picked by `SEARCH_PROVIDER`:
+
+- `auto` (default): DeepSeek when `DEEPSEEK_API_KEY` is set, otherwise SearXNG when `SEARXNG_URL` is set. With neither, `web_search` is not registered.
+- `deepseek`: always DeepSeek. Startup fails if the key is missing.
+- `searxng`: always SearXNG, even when a DeepSeek key is set. Startup fails if `SEARXNG_URL` is missing.
+
+SearXNG stays the free, self-hosted option. [DeepSeek Search](https://api-docs.deepseek.com/guides/search/) uses DeepSeek's own index with reranking and is billed at $0.75 per 1,000 successful requests; empty results are free. Insufficient balance (HTTP 402) is reported as such in the tool error. The API allows 100 QPS. There is no retry or cache.
+
+With DeepSeek, each result carries `snippet`, a longer `summary`, `publishedDate`, `rerankScore` (0–3; 1.5 and above is high quality) and `authority` (0–4, −1 unknown). The tool never asks DeepSeek for full page content; read pages with `md` or `crawl`. `max_results` maps to DeepSeek's `count`.
+
+DeepSeek has no language, time range, category or page parameters, so:
+
+- `language` becomes a `lang:` operator on the primary language code (`zh-CN` → `lang:zh`).
+- `time_range` becomes `after:YYYY-MM-DD` relative to the server's current date.
+- `categories` is ignored.
+- `page` above 1 is ignored and a `notice` field says so.
+
+`query` is passed through unchanged, so DeepSeek operators work: `site:`, `-site:`, `-word`, `-"phrase"`, `"phrase"`, `lang:zh,en`, `after:2025`, `before:2026`. Queries are limited to 128 characters.
 
 ## Client configuration
 
@@ -376,4 +399,4 @@ Or add via the Cursor UI: **Settings → MCP → Add new global MCP server**, ty
 go build ./... && go vet ./... && go test ./...
 ```
 
-Layout: `cmd/crawl4ai-mcp` (CLI, auth, wiring), `internal/c4a` (Crawl4AI REST client), `internal/searxng` (SearXNG client), `internal/server` (tool registration and result shaping), `internal/appconfig` (shared HTTP transports, logger).
+Layout: `cmd/crawl4ai-mcp` (CLI, auth, wiring), `internal/c4a` (Crawl4AI REST client), `internal/searxng` (SearXNG client), `internal/deepseek` (DeepSeek Search client), `internal/server` (tool registration and result shaping), `internal/appconfig` (shared HTTP transports, logger).

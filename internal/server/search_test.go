@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -115,5 +116,78 @@ func TestWebSearchUpstreamErrorSurfaces(t *testing.T) {
 	res := post(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"web_search","arguments":{"query":"q"}}}`)
 	if !strings.Contains(res, `"isError":true`) || !strings.Contains(res, "json format not enabled") {
 		t.Fatalf("expected tool error with hint: %.400s", res)
+	}
+}
+
+// providerStubs returns a DeepSeek and a SearXNG stub that each mark their
+// hits with a distinct title, plus the last DeepSeek request body.
+func providerStubs(t *testing.T) (ds, sx *httptest.Server, dsBody *string) {
+	t.Helper()
+	body := new(string)
+	ds = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		*body = string(b)
+		_, _ = w.Write([]byte(`{"results":[{"rerank_score":2.5,"title":"from-deepseek","url":"https://d/","snippet":"s","summary":"long","date":"2026-01-02T00:00:00Z","authority":3}]}`))
+	}))
+	sx = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"query":"q","results":[{"title":"from-searxng","url":"https://s/","content":"c"}]}`))
+	}))
+	t.Cleanup(ds.Close)
+	t.Cleanup(sx.Close)
+	return ds, sx, body
+}
+
+func TestWebSearchProviderSelection(t *testing.T) {
+	ds, sx, _ := providerStubs(t)
+	call := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"web_search","arguments":{"query":"q"}}}`
+	for _, tc := range []struct {
+		name     string
+		opts     Options
+		want     string
+		wantNone string
+	}{
+		{"auto with key uses deepseek", Options{DeepSeekAPIKey: "k", SearXNGBaseURL: sx.URL}, "from-deepseek", "from-searxng"},
+		{"auto without key uses searxng", Options{SearXNGBaseURL: sx.URL}, "from-searxng", "from-deepseek"},
+		{"explicit searxng beats key", Options{SearchProvider: "searxng", DeepSeekAPIKey: "k", SearXNGBaseURL: sx.URL}, "from-searxng", "from-deepseek"},
+		{"explicit deepseek", Options{SearchProvider: "deepseek", DeepSeekAPIKey: "k", SearXNGBaseURL: sx.URL}, "from-deepseek", "from-searxng"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.opts.Crawl4AIBaseURL = "http://[IP]:1"
+			tc.opts.DeepSeekBaseURL = ds.URL
+			res := serveMCP(t, tc.opts)(call)
+			if !strings.Contains(res, tc.want) || strings.Contains(res, tc.wantNone) {
+				t.Fatalf("want %s only: %.400s", tc.want, res)
+			}
+		})
+	}
+}
+
+func TestWebSearchProviderMisconfigured(t *testing.T) {
+	for _, opts := range []Options{
+		{SearchProvider: "deepseek"},
+		{SearchProvider: "searxng", DeepSeekAPIKey: "k"},
+		{SearchProvider: "bing", DeepSeekAPIKey: "k"},
+	} {
+		opts.Crawl4AIBaseURL = "http://[IP]:1"
+		if _, err := New(opts); err == nil {
+			t.Fatalf("New(%+v) should fail", opts)
+		}
+	}
+}
+
+func TestWebSearchDeepSeekMapping(t *testing.T) {
+	ds, _, body := providerStubs(t)
+	post := serveMCP(t, Options{Crawl4AIBaseURL: "http://[IP]:1", DeepSeekAPIKey: "k", DeepSeekBaseURL: ds.URL})
+	res := post(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"web_search","arguments":{"query":"q","language":"zh-CN","time_range":"week","max_results":7,"page":2}}}`)
+	for _, want := range []string{`"summary":"long"`, `"rerankScore":2.5`, `"authority":3`, `"publishedDate":"2026-01-02T00:00:00Z"`, `"notice"`} {
+		if !strings.Contains(res, want) {
+			t.Fatalf("result missing %s: %.600s", want, res)
+		}
+	}
+	after := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
+	for _, want := range []string{`q lang:zh after:` + after, `"count":7`} {
+		if !strings.Contains(*body, want) {
+			t.Fatalf("request body missing %s: %s", want, *body)
+		}
 	}
 }

@@ -31,6 +31,8 @@ type config struct {
 	routeConfig  string
 	mcpToken     string
 	searxngURL   string
+	deepseekKey  string
+	searchProv   string
 	enableJS     bool
 	enableAsk    bool
 	production   bool
@@ -93,7 +95,7 @@ func rootCmd() *cobra.Command {
 	cfg := &config{}
 	cmd := &cobra.Command{
 		Use:     "crawl4ai-mcp",
-		Short:   "Stateless Streamable HTTP MCP server for Crawl4AI (+ optional SearXNG web_search)",
+		Short:   "Stateless Streamable HTTP MCP server for Crawl4AI (+ optional web_search via DeepSeek or SearXNG)",
 		Version: version,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(cmd, cfg)
@@ -107,6 +109,8 @@ func rootCmd() *cobra.Command {
 	pf.StringVar(&cfg.routeConfig, "route-config", envOr("ROUTE_CONFIG", ""), "YAML file routing URLs to several Crawl4AI backends; overrides --crawl4ai-url/--crawl4ai-token")
 	pf.StringVar(&cfg.mcpToken, "mcp-token", os.Getenv("MCP_TOKEN"), "bearer token for MCP clients; empty disables auth")
 	pf.StringVar(&cfg.searxngURL, "searxng-url", envOr("SEARXNG_URL", ""), "SearXNG base URL; registers web_search when set")
+	pf.StringVar(&cfg.deepseekKey, "deepseek-api-key", os.Getenv("DEEPSEEK_API_KEY"), "DeepSeek Search API key; enables the DeepSeek web_search backend")
+	pf.StringVar(&cfg.searchProv, "search-provider", envOr("SEARCH_PROVIDER", "auto"), "web_search backend: auto (DeepSeek if key set, else SearXNG), deepseek, searxng")
 	pf.BoolVar(&cfg.enableJS, "enable-execute-js", envBool("ENABLE_EXECUTE_JS", false), "expose execute_js tool")
 	pf.BoolVar(&cfg.enableAsk, "enable-ask", envBool("ENABLE_ASK", true), "expose ask tool")
 	pf.BoolVar(&cfg.production, "log-production", envBool("LOG_PRODUCTION", false), "structured JSON logs instead of console")
@@ -126,6 +130,8 @@ func run(cmd *cobra.Command, cfg *config) error {
 		EnableExecuteJS: cfg.enableJS,
 		EnableAsk:       cfg.enableAsk,
 		SearXNGBaseURL:  strings.TrimRight(cfg.searxngURL, "/"),
+		DeepSeekAPIKey:  cfg.deepseekKey,
+		SearchProvider:  cfg.searchProv,
 	})
 	if err != nil {
 		return fmt.Errorf("building server: %w", err)
@@ -173,8 +179,8 @@ func run(cmd *cobra.Command, cfg *config) error {
 		}
 		log.Warn("MCP_TOKEN not set; /mcp is unauthenticated (loopback only)")
 	}
-	if cfg.searxngURL != "" {
-		log.Info("web_search enabled", zap.String("searxng", cfg.searxngURL))
+	if provider := effectiveSearchProvider(cfg); provider != "" {
+		log.Info("web_search enabled", zap.String("search_provider", provider), zap.String("configured", cfg.searchProv))
 	}
 	log.Info("listening",
 		zap.String("addr", ln.Addr().String()),
@@ -204,6 +210,22 @@ func run(cmd *cobra.Command, cfg *config) error {
 		}
 		return nil
 	}
+}
+
+// effectiveSearchProvider mirrors server.addSearchTool's choice for logging;
+// empty means web_search is not registered. Validation happens in server.New.
+func effectiveSearchProvider(cfg *config) string {
+	switch cfg.searchProv {
+	case "deepseek", "searxng":
+		return cfg.searchProv
+	}
+	switch {
+	case cfg.deepseekKey != "":
+		return "deepseek"
+	case cfg.searxngURL != "":
+		return "searxng"
+	}
+	return ""
 }
 
 // isLoopbackListener reports whether the listener only accepts loopback

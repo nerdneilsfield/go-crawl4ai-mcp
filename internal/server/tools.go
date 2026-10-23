@@ -25,7 +25,10 @@ type Options struct {
 	RouteConfig     string // YAML file routing URLs to several Crawl4AI backends; overrides the two fields above
 	EnableExecuteJS bool   // upstream requires CRAWL4AI_EXECUTE_JS_ENABLED=true on its side
 	EnableAsk       bool
-	SearXNGBaseURL  string // when set, the web_search tool is registered
+	SearXNGBaseURL  string // SearXNG backend for web_search
+	DeepSeekAPIKey  string // DeepSeek Search backend for web_search
+	DeepSeekBaseURL string // override for tests; empty = https://api.deepseek.com
+	SearchProvider  string // auto (default: DeepSeek when a key is set, else SearXNG), deepseek, searxng
 }
 
 const (
@@ -112,8 +115,8 @@ func New(opts Options) (*mcp.Server, error) {
 
 	addSitemapTool(s)
 
-	if opts.SearXNGBaseURL != "" {
-		addSearchTool(s, opts.SearXNGBaseURL)
+	if err := addSearchTool(s, opts); err != nil {
+		return nil, err
 	}
 
 	return s, nil

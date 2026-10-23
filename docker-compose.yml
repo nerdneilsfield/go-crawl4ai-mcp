@@ -39,3 +39,4 @@ services:
       CRAWL4AI_URL: http://crawl4ai:11235
       CRAWL4AI_TOKEN: upstream-token
       SEARXNG_URL: http://searxng:8080
+      # DEEPSEEK_API_KEY: sk-...  # optional: use DeepSeek Search for web_search (see SEARCH_PROVIDER)
