@@ -1,0 +1,29 @@
+# Several Crawl4AI backends behind one MCP server. Copy examples/routes.yaml
+# next to this file, edit the backends and rules, then: docker compose up -d
+services:
+  geo-init:
+    # Runs once. A fresh named volume belongs to root, but the MCP image runs as
+    # uid 65532, so hand the volume over before the server starts.
+    image: busybox:stable
+    user: "0"
+    command: chown 65532:65532 /data
+    volumes:
+      - geo:/data
+
+  crawl4ai-mcp:
+    image: ghcr.io/nerdneilsfield/go-crawl4ai-mcp:latest
+    restart: unless-stopped
+    depends_on:
+      geo-init:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    environment:
+      MCP_TOKEN: letmein # what your MCP client sends
+      ROUTE_CONFIG: /etc/crawl4ai-mcp/routes.yaml
+    volumes:
+      - ./routes.yaml:/etc/crawl4ai-mcp/routes.yaml:ro
+      - geo:/data # set `geo: {dir: /data}` in routes.yaml to keep geosite/geoip here
+
+volumes:
+  geo:

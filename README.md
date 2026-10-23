@@ -92,6 +92,28 @@ search:
 
 MCP clients connect to `http://<host>:8080/mcp` with `Authorization: Bearer letmein`. All three containers talk on the internal compose network; only :8080 needs to be reachable from the client (and :11235 if you want direct browser access to the Crawl4AI playground).
 
+### Routing across several Crawl4AI backends
+
+If you run Crawl4AI in more than one region, give the server a routing file instead of a single `CRAWL4AI_URL`. Start from the examples in this repository:
+
+- [`examples/routes.yaml`](examples/routes.yaml): backends, rules, and the optional `geo` and `dns` sections, commented.
+- [`examples/docker-compose.routing.yml`](examples/docker-compose.routing.yml): the MCP server with that file mounted and a volume for the geo databases.
+
+```sh
+cp examples/routes.yaml routes.yaml     # edit backends and rules
+crawl4ai-mcp --route-config routes.yaml # or: ROUTE_CONFIG=routes.yaml
+```
+
+With Docker, mount the file and pass its path:
+
+```sh
+docker run -p 8080:8080 -e MCP_TOKEN=letmein \
+  -e ROUTE_CONFIG=/routes.yaml -v "$PWD/routes.yaml:/routes.yaml:ro" \
+  ghcr.io/nerdneilsfield/go-crawl4ai-mcp:latest
+```
+
+The startup log tells you it worked: a `downloading geo database` line the first time a `GEOSITE` or `GEOIP` rule is used, then `listening`. A config error (unknown backend, missing `MATCH`, unknown category) stops the server with the reason. Rule syntax, the databases and DNS are covered in [the reference below](#routing-to-several-crawl4ai-backends).
+
 ## Tools
 
 | Tool | Upstream | Enabled | Notes |
@@ -181,7 +203,8 @@ geo:
 
 - Only the categories your rules name are loaded; an unknown category is a startup error. Category names are case-insensitive. The `@attr` filters (`cn@ads`) are not supported, and neither are `.mmdb` or `.mrs` files.
 - An existing file is never refreshed. Delete it and restart to pick up a new version.
-- In Docker the cache dir is inside the container and disappears with it, so every new container downloads again. Mount a volume and set `geo.dir` to it.
+- In Docker, with no `geo.dir` the files go to `/home/nonroot/.cache/crawl4ai-mcp` inside the container. That works, but a new container downloads them again. To keep them, mount a volume, point `geo.dir` at it, and make sure uid 65532 (the image's `nonroot` user) can write there. A fresh named volume belongs to root and fails with `mkdir ...: permission denied`; [`examples/docker-compose.routing.yml`](examples/docker-compose.routing.yml) shows a one-shot `chown` that fixes it. With a bind mount, `chown 65532:65532` the host directory instead.
+- If the server cannot reach GitHub (for example behind a firewall), download the two files yourself, put them in `geo.dir`, and they are used as they are. Or point `geosite_url` / `geoip_url` at a mirror.
 
 #### DNS lookups for IP rules
 

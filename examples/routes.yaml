@@ -1,0 +1,51 @@
+# Routing config for crawl4ai-mcp. Use it with:
+#   crawl4ai-mcp --route-config routes.yaml      (or ROUTE_CONFIG=routes.yaml)
+# Full reference: README.md, "Routing to several Crawl4AI backends".
+
+# Each backend is one Crawl4AI deployment. `token` is its CRAWL4AI_API_TOKEN
+# and can be left out when that backend has none.
+backends:
+  hk:
+    url: http://crawl4ai-hk.example.com:11235
+    token: change-me-hk
+  us:
+    url: http://crawl4ai-us.example.com:11235
+    token: change-me-us
+
+# Rules are checked top to bottom and the first match wins.
+# The last rule must be MATCH.
+rules:
+  # Exact domain lists you maintain yourself.
+  - DOMAIN-SUFFIX,bilibili.com,hk   # the domain and all its subdomains
+  - DOMAIN,example.org,us           # this host only
+  - DOMAIN-KEYWORD,google,us        # any host containing the word
+
+  # Category lists from geosite.dat, so you do not have to write the domains.
+  - GEOSITE,google,us
+  - GEOSITE,cn,hk
+
+  # Literal IPs in the URL (and resolved addresses when dns.enable is true).
+  - IP-CIDR,10.0.0.0/8,hk
+  - GEOIP,cn,hk
+
+  # Everything else. `ask` and raw: URLs always use this backend.
+  - MATCH,us
+
+# --- Optional -------------------------------------------------------------
+
+# geosite.dat / geoip.dat are downloaded at startup the first time a GEOSITE or
+# GEOIP rule needs them. Uncomment to change where they live or where they
+# come from. In Docker, mount a volume on `dir` so they survive new containers.
+#geo:
+#  dir: /data/geo
+#  geosite_url: https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat
+#  geoip_url: https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geoip.dat
+
+# Off by default. When on, IP-CIDR and GEOIP also match the addresses a domain
+# resolves to, instead of only literal IPs in the URL.
+#dns:
+#  enable: true
+#  servers:                         # default: the first two
+#    - https://1.1.1.1/dns-query    # DoH
+#    - https://8.8.8.8/dns-query
+#    - tls://dns.google             # DoT, port 853 unless given
