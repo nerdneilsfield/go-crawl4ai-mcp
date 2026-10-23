@@ -50,6 +50,9 @@ func New(opts Options) (*mcp.Server, error) {
 			return nil, err
 		}
 	}
+	if rt.geo != nil {
+		go rt.geo.run(context.Background()) // for the life of the process
+	}
 
 	s := mcp.NewServer(&mcp.Implementation{Name: "crawl4ai-mcp", Version: "0.2.0"}, nil)
 

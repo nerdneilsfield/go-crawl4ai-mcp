@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -19,55 +21,156 @@ import (
 )
 
 const (
-	defaultGeoSiteURL = "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
-	defaultGeoIPURL   = "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geoip.dat"
+	defaultGeoSiteURL  = "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
+	defaultGeoIPURL    = "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geoip.dat"
+	defaultGeoInterval = 24 * time.Hour
 )
 
-// ensureGeoFile returns dir/name, downloading it from url first if it is not
-// there. An existing file is never refreshed; delete it to update.
-func ensureGeoFile(dir, name, url string) (string, error) {
+// geoStore holds the geosite/geoip categories the rules name and keeps them
+// fresh: files are re-downloaded every interval, checked by parsing, and only
+// then swapped in, so a bad download never replaces working data.
+type geoStore struct {
+	dir                string
+	siteURL, ipURL     string
+	wantSites, wantIPs map[string]bool // upper-case categories the rules use
+	interval           time.Duration   // 0: never refresh
+	sites              atomic.Pointer[map[string]*geoSet]
+	ips                atomic.Pointer[map[string][]netip.Prefix]
+}
+
+func (g *geoStore) site(code string) *geoSet            { return (*g.sites.Load())[code] }
+func (g *geoStore) prefixes(code string) []netip.Prefix { return (*g.ips.Load())[code] }
+
+func (g *geoStore) loadSites(path string) error {
+	m, err := loadGeoSite(path, g.wantSites)
+	if err == nil {
+		g.sites.Store(&m)
+	}
+	return err
+}
+
+func (g *geoStore) loadIPs(path string) error {
+	m, err := loadGeoIP(path, g.wantIPs)
+	if err == nil {
+		g.ips.Store(&m)
+	}
+	return err
+}
+
+// newGeoStore loads the databases once. A missing file is downloaded (failure
+// is fatal). An existing file older than interval is refreshed too, but if that
+// fails the old copy is used, so an offline restart still works.
+func newGeoStore(dir, siteURL, ipURL string, interval time.Duration, wantSites, wantIPs map[string]bool) (*geoStore, error) {
 	if dir == "" {
 		base, err := os.UserCacheDir()
 		if err != nil {
-			return "", fmt.Errorf("geo.dir not set and no user cache dir: %w", err)
+			return nil, fmt.Errorf("geo.dir not set and no user cache dir: %w", err)
 		}
 		dir = filepath.Join(base, "crawl4ai-mcp")
 	}
-	path := filepath.Join(dir, name)
-	if _, err := os.Stat(path); err == nil {
-		return path, nil
+	g := &geoStore{dir: dir, siteURL: siteURL, ipURL: ipURL, wantSites: wantSites, wantIPs: wantIPs, interval: interval}
+	if len(wantSites) > 0 {
+		if err := g.open("geosite.dat", siteURL, g.loadSites); err != nil {
+			return nil, err
+		}
 	}
+	if len(wantIPs) > 0 {
+		if err := g.open("geoip.dat", ipURL, g.loadIPs); err != nil {
+			return nil, err
+		}
+	}
+	return g, nil
+}
+
+func (g *geoStore) open(name, url string, load func(string) error) error {
+	path := filepath.Join(g.dir, name)
+	fi, err := os.Stat(path)
+	missing := err != nil
+	if missing || (g.interval > 0 && time.Since(fi.ModTime()) > g.interval) {
+		err := download(url, path, load)
+		if err == nil {
+			return nil
+		}
+		if missing {
+			return err
+		}
+		appconfig.Logger.Warn("geo database refresh failed; using the existing file", zap.String("file", path), zap.Error(err))
+	}
+	return load(path)
+}
+
+// refresh re-downloads both databases. Each is replaced only if it downloads
+// and parses; on failure the data already in use stays.
+func (g *geoStore) refresh() error {
+	var errs []error
+	if len(g.wantSites) > 0 {
+		errs = append(errs, download(g.siteURL, filepath.Join(g.dir, "geosite.dat"), g.loadSites))
+	}
+	if len(g.wantIPs) > 0 {
+		errs = append(errs, download(g.ipURL, filepath.Join(g.dir, "geoip.dat"), g.loadIPs))
+	}
+	return errors.Join(errs...)
+}
+
+// run refreshes every interval until ctx ends.
+func (g *geoStore) run(ctx context.Context) {
+	if g.interval <= 0 {
+		return
+	}
+	t := time.NewTicker(g.interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := g.refresh(); err != nil {
+				appconfig.Logger.Warn("geo database refresh failed; keeping the current data", zap.Error(err))
+			} else {
+				appconfig.Logger.Info("geo databases refreshed")
+			}
+		}
+	}
+}
+
+// download fetches url to a temp file next to path, runs check on it, and only
+// then renames it into place.
+func download(url, path string, check func(path string) error) error {
+	dir, name := filepath.Dir(path), filepath.Base(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
+		return err
 	}
 	appconfig.Logger.Info("downloading geo database", zap.String("url", url), zap.String("to", path))
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", err
+		return err
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("downloading %s: %w", name, err)
+		return fmt.Errorf("downloading %s: %w", name, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("downloading %s: %s: HTTP %d", name, url, resp.StatusCode)
+		return fmt.Errorf("downloading %s: %s: HTTP %d", name, url, resp.StatusCode)
 	}
 	tmp, err := os.CreateTemp(dir, name+".*")
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer os.Remove(tmp.Name()) // no-op after the rename
 	if _, err := io.Copy(tmp, resp.Body); err != nil {
 		tmp.Close()
-		return "", fmt.Errorf("downloading %s: %w", name, err)
+		return fmt.Errorf("downloading %s: %w", name, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return "", err
+		return err
 	}
-	return path, os.Rename(tmp.Name(), path)
+	if err := check(tmp.Name()); err != nil {
+		return fmt.Errorf("downloaded %s rejected: %w", name, err)
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 // Readers for the v2ray geosite.dat / geoip.dat files (what mihomo, Xray and

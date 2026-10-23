@@ -34,10 +34,13 @@ rules:
 # --- Optional -------------------------------------------------------------
 
 # geosite.dat / geoip.dat are downloaded at startup the first time a GEOSITE or
-# GEOIP rule needs them. Uncomment to change where they live or where they
-# come from. In Docker, mount a volume on `dir` so they survive new containers.
+# GEOIP rule needs them, then refreshed in the background every update_interval
+# (a bad download is rejected and the current data stays). Uncomment to change
+# where they live, where they come from, or how often they refresh.
+# In Docker, mount a volume on `dir` so they survive new containers.
 #geo:
 #  dir: /data/geo
+#  update_interval: 24h              # default; 0s turns refreshing off
 #  geosite_url: https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat
 #  geoip_url: https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geoip.dat
 

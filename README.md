@@ -199,12 +199,15 @@ geo:
   dir: /data/geo                    # default: <user cache dir>/crawl4ai-mcp
   geosite_url: https://example.com/geosite.dat
   geoip_url: https://example.com/geoip.dat
+  update_interval: 24h              # default 24h; 0s turns refreshing off
 ```
 
 - Only the categories your rules name are loaded; an unknown category is a startup error. Category names are case-insensitive. The `@attr` filters (`cn@ads`) are not supported, and neither are `.mmdb` or `.mrs` files.
-- An existing file is never refreshed. Delete it and restart to pick up a new version.
+- **Refreshing**: every `update_interval` (default 24h) the server downloads both files again in the background. Each one is parsed before it replaces anything, so an error page, a truncated file or a missing category is rejected and the data in use stays; the new data takes effect without a restart. Failures are logged as `geo database refresh failed` and retried at the next interval.
+- **On start**, a file older than `update_interval` is refreshed first. If that download fails, the old file is used, so a restart while offline still works. Only a missing file with no way to download it stops the server.
+- With `update_interval: 0s` nothing is ever re-downloaded after the first fetch; replace the files yourself and restart.
 - In Docker, with no `geo.dir` the files go to `/home/nonroot/.cache/crawl4ai-mcp` inside the container. That works, but a new container downloads them again. To keep them, mount a volume, point `geo.dir` at it, and make sure uid 65532 (the image's `nonroot` user) can write there. A fresh named volume belongs to root and fails with `mkdir ...: permission denied`; [`examples/docker-compose.routing.yml`](examples/docker-compose.routing.yml) shows a one-shot `chown` that fixes it. With a bind mount, `chown 65532:65532` the host directory instead.
-- If the server cannot reach GitHub (for example behind a firewall), download the two files yourself, put them in `geo.dir`, and they are used as they are. Or point `geosite_url` / `geoip_url` at a mirror.
+- If the server cannot reach GitHub (for example behind a firewall), point `geosite_url` / `geoip_url` at a mirror. Or place the two files in `geo.dir` yourself and set `update_interval: 0s` so the server never tries to download.
 
 #### DNS lookups for IP rules
 

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
@@ -24,14 +25,14 @@ import (
 type router struct {
 	clients map[string]*c4a.Client
 	rules   []rule
+	geo     *geoStore // nil when no rule uses GEOSITE/GEOIP
 	dns     *resolver // nil unless dns.enable: IP-CIDR/GEOIP then only see literal IPs
 }
 
 type rule struct {
 	kind    string // DOMAIN | DOMAIN-SUFFIX | DOMAIN-KEYWORD | IP-CIDR | GEOSITE | GEOIP | MATCH
 	val     string
-	cidrs   []netip.Prefix // IP-CIDR: one prefix; GEOIP: the country's prefixes
-	site    *geoSet        // GEOSITE
+	cidrs   []netip.Prefix // IP-CIDR only; GEOIP reads the live database
 	backend string
 }
 
@@ -52,6 +53,8 @@ type routeFile struct {
 		Dir        string `yaml:"dir"`         // where geosite.dat / geoip.dat live; default: user cache dir
 		GeoSiteURL string `yaml:"geosite_url"` // downloaded into dir when the file is missing
 		GeoIPURL   string `yaml:"geoip_url"`
+		// How often to re-download both files; default 24h, "0s" turns it off.
+		UpdateInterval *time.Duration `yaml:"update_interval"`
 	} `yaml:"geo"`
 	DNS struct {
 		Enable  bool     `yaml:"enable"`
@@ -155,35 +158,19 @@ func (r *router) attachGeo(f *routeFile) error {
 			ips[ru.val] = true
 		}
 	}
-	var siteSets map[string]*geoSet
-	var ipSets map[string][]netip.Prefix
-	if len(sites) > 0 {
-		path, err := ensureGeoFile(f.Geo.Dir, "geosite.dat", pick(f.Geo.GeoSiteURL, defaultGeoSiteURL))
-		if err != nil {
-			return err
-		}
-		if siteSets, err = loadGeoSite(path, sites); err != nil {
-			return err
-		}
+	if len(sites)+len(ips) == 0 {
+		return nil
 	}
-	if len(ips) > 0 {
-		path, err := ensureGeoFile(f.Geo.Dir, "geoip.dat", pick(f.Geo.GeoIPURL, defaultGeoIPURL))
-		if err != nil {
-			return err
-		}
-		if ipSets, err = loadGeoIP(path, ips); err != nil {
-			return err
-		}
+	interval := defaultGeoInterval
+	if f.Geo.UpdateInterval != nil {
+		interval = *f.Geo.UpdateInterval
 	}
-	for i := range r.rules {
-		switch r.rules[i].kind {
-		case "GEOSITE":
-			r.rules[i].site = siteSets[r.rules[i].val]
-		case "GEOIP":
-			r.rules[i].cidrs = ipSets[r.rules[i].val]
-		}
+	if interval < 0 {
+		return fmt.Errorf("geo.update_interval must not be negative")
 	}
-	return nil
+	var err error
+	r.geo, err = newGeoStore(f.Geo.Dir, pick(f.Geo.GeoSiteURL, defaultGeoSiteURL), pick(f.Geo.GeoIPURL, defaultGeoIPURL), interval, sites, ips)
+	return err
 }
 
 // pick returns the backend name for a target URL. IP-CIDR and GEOIP match a
@@ -221,10 +208,14 @@ func (r *router) pick(ctx context.Context, rawURL string) string {
 		case "DOMAIN-KEYWORD":
 			ok = strings.Contains(host, ru.val)
 		case "GEOSITE":
-			ok = ru.site.match(host)
+			ok = r.geo.site(ru.val).match(host)
 		case "IP-CIDR", "GEOIP":
+			cidrs := ru.cidrs
+			if ru.kind == "GEOIP" {
+				cidrs = r.geo.prefixes(ru.val)
+			}
 			for _, a := range addrs() {
-				for _, c := range ru.cidrs {
+				for _, c := range cidrs {
 					if c.Contains(a.Unmap()) {
 						ok = true
 					}
