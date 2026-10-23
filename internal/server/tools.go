@@ -57,7 +57,7 @@ func New(opts Options) (*mcp.Server, error) {
 		go rt.geo.run(context.Background()) // for the life of the process
 	}
 
-	s := mcp.NewServer(&mcp.Implementation{Name: "crawl4ai-mcp", Version: "0.2.1"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "crawl4ai-mcp", Version: "0.3.0"}, nil)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        toolMD,
