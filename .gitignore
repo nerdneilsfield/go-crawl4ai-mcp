@@ -34,3 +34,6 @@ go.work.sum
 
 # Goreleaser
 dist/
+
+# pi plugin working files (may contain secrets)
+.cw/
