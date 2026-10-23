@@ -28,6 +28,7 @@ type config struct {
 	addr         string
 	baseURL      string
 	c4aToken     string
+	routeConfig  string
 	mcpToken     string
 	searxngURL   string
 	enableJS     bool
@@ -103,6 +104,7 @@ func rootCmd() *cobra.Command {
 	pf.StringVar(&cfg.addr, "addr", envOr("MCP_ADDR", ":8080"), "listen address")
 	pf.StringVar(&cfg.baseURL, "crawl4ai-url", envOr("CRAWL4AI_URL", "http://127.0.0.1:11235"), "Crawl4AI server base URL")
 	pf.StringVar(&cfg.c4aToken, "crawl4ai-token", os.Getenv("CRAWL4AI_TOKEN"), "Crawl4AI API token")
+	pf.StringVar(&cfg.routeConfig, "route-config", envOr("ROUTE_CONFIG", ""), "YAML file routing URLs to several Crawl4AI backends; overrides --crawl4ai-url/--crawl4ai-token")
 	pf.StringVar(&cfg.mcpToken, "mcp-token", os.Getenv("MCP_TOKEN"), "bearer token for MCP clients; empty disables auth")
 	pf.StringVar(&cfg.searxngURL, "searxng-url", envOr("SEARXNG_URL", ""), "SearXNG base URL; registers web_search when set")
 	pf.BoolVar(&cfg.enableJS, "enable-execute-js", envBool("ENABLE_EXECUTE_JS", false), "expose execute_js tool")
@@ -120,6 +122,7 @@ func run(cmd *cobra.Command, cfg *config) error {
 	srv, err := server.New(server.Options{
 		Crawl4AIBaseURL: strings.TrimRight(cfg.baseURL, "/"),
 		Crawl4AIToken:   cfg.c4aToken,
+		RouteConfig:     cfg.routeConfig,
 		EnableExecuteJS: cfg.enableJS,
 		EnableAsk:       cfg.enableAsk,
 		SearXNGBaseURL:  strings.TrimRight(cfg.searxngURL, "/"),

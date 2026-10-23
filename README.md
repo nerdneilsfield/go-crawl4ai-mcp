@@ -11,7 +11,7 @@ MCP client ── MCP_TOKEN ──> go-crawl4ai-mcp :8080 ── CRAWL4AI_TOKEN 
 
 ## Requirements
 
-- Go 1.25+ to build from source, or Docker.
+- Go 1.26+ to build from source, or Docker.
 - A running Crawl4AI server (0.9.x) with its REST API reachable. The upstream container must set `CRAWL4AI_API_TOKEN` if you want authenticated upstream calls.
 - Optional: a SearXNG instance with the JSON output format enabled.
 
@@ -124,6 +124,7 @@ Command-line flags take precedence over environment variables.
 | `--addr` | `MCP_ADDR` | `:8080` | listen address |
 | `--crawl4ai-url` | `CRAWL4AI_URL` | `http://127.0.0.1:11235` | Crawl4AI base URL |
 | `--crawl4ai-token` | `CRAWL4AI_TOKEN` | empty | Crawl4AI API token (the upstream's `CRAWL4AI_API_TOKEN`); empty sends no auth |
+| `--route-config` | `ROUTE_CONFIG` | empty | YAML file that routes URLs to several Crawl4AI backends ([see below](#routing-to-several-crawl4ai-backends)); when set, `--crawl4ai-url`/`--crawl4ai-token` are ignored |
 | `--mcp-token` | `MCP_TOKEN` | empty | Bearer token required from MCP clients; empty disables auth (dev/loopback only) |
 | `--crawl-timeout` | `CRAWL_TIMEOUT` | `90s` | per-call upstream timeout. Accepts Go durations (`2m`) or bare seconds (`120`); `0` disables. Applies to Crawl4AI calls only, not SearXNG |
 | `--searxng-url` | `SEARXNG_URL` | empty | SearXNG base URL; setting it registers `web_search` |
@@ -131,7 +132,73 @@ Command-line flags take precedence over environment variables.
 | `--enable-ask` | `ENABLE_ASK` | `true` | expose `ask` |
 | `--log-production` | `LOG_PRODUCTION` | `false` | JSON logs (zap production) instead of console format |
 
-Exit status is `0` on clean shutdown (SIGTERM/SIGINT drain in-flight requests, up to 25 s) and `1` on startup or runtime errors.
+### Routing to several Crawl4AI backends
+
+Point `--route-config` at a YAML file to send each URL to a different backend (say, one per region). Rules are checked top to bottom, first match wins, and the last rule must be `MATCH`. Without `--route-config` everything goes to the single `--crawl4ai-url`.
+
+```yaml
+backends:
+  hk: {url: http://hk.example:11235, token: xxx}
+  us: {url: http://us.example:11235, token: yyy}
+rules:
+  - DOMAIN-SUFFIX,bilibili.com,hk   # the domain itself and its subdomains
+  - DOMAIN,example.org,us           # exact host
+  - DOMAIN-KEYWORD,google,us
+  - GEOSITE,google,us               # category from geosite.dat
+  - GEOSITE,cn,hk
+  - GEOIP,cn,hk                     # country from geoip.dat
+  - IP-CIDR,10.0.0.0/8,hk
+  - MATCH,us
+```
+
+| Rule | Matches |
+|---|---|
+| `DOMAIN,host,backend` | exactly that host |
+| `DOMAIN-SUFFIX,example.com,backend` | `example.com` and every subdomain |
+| `DOMAIN-KEYWORD,word,backend` | hosts containing `word` |
+| `GEOSITE,category,backend` | hosts in a [geosite](#geosite-and-geoip-databases) category (`cn`, `google`, ...) |
+| `IP-CIDR,a.b.c.d/n,backend` | a literal IP in the URL, or a resolved address when [DNS](#dns-lookups-for-ip-rules) is on |
+| `GEOIP,cn,backend` | same, against a country in geoip |
+| `MATCH,backend` | everything; must be last |
+
+How tools use it:
+
+- `crawl` splits its URLs by backend and runs the groups in parallel. Pages come back grouped by backend, not in input order. If one backend fails, its URLs come back as failed pages and the rest are kept.
+- `submit_crawl` needs all URLs to land on one backend, otherwise it errors. With several backends its `task_id` is `backend:id`, and `get_crawl_job` uses the prefix to find the right backend. Backend names therefore cannot contain `:`.
+- `ask` and `raw:` URLs go to the `MATCH` backend.
+- Rules look at the URL you pass in, not at where redirects lead.
+
+#### geosite and geoip databases
+
+`GEOSITE` and `GEOIP` read the v2ray-format `geosite.dat` and `geoip.dat` that mihomo, Xray and sing-box all use. You do not need to download them: when a rule needs one and it is missing, the server fetches it at startup from [meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat). To use a different source or location:
+
+```yaml
+geo:
+  dir: /data/geo                    # default: <user cache dir>/crawl4ai-mcp
+  geosite_url: https://example.com/geosite.dat
+  geoip_url: https://example.com/geoip.dat
+```
+
+- Only the categories your rules name are loaded; an unknown category is a startup error. Category names are case-insensitive. The `@attr` filters (`cn@ads`) are not supported, and neither are `.mmdb` or `.mrs` files.
+- An existing file is never refreshed. Delete it and restart to pick up a new version.
+- In Docker the cache dir is inside the container and disappears with it, so every new container downloads again. Mount a volume and set `geo.dir` to it.
+
+#### DNS lookups for IP rules
+
+By default `IP-CIDR` and `GEOIP` only match when the URL itself contains an IP, so `GEOIP,cn` does not catch `https://www.baidu.com`. Turn on DNS to make them resolve the host first:
+
+```yaml
+dns:
+  enable: true                      # default false
+  servers:                          # default: the two DoH servers below
+    - https://1.1.1.1/dns-query     # DoH
+    - https://8.8.8.8/dns-query
+    - tls://dns.google              # DoT, port 853 unless given
+```
+
+- Servers are tried in order; the first that answers wins. A host that cannot be resolved just skips IP rules and falls through to later ones.
+- Only DoH (`https://`) and DoT (`tls://`) are supported, with certificate checks. There is no plain UDP DNS and no cache; a lookup happens only when a request reaches an `IP-CIDR` or `GEOIP` rule.
+- The answer depends on where the resolver sees you from. Sites with geo-aware DNS return overseas addresses to an overseas resolver, so `www.baidu.com` may resolve outside CN even though it is a Chinese site. `GEOSITE` classifies by name and does not have this problem; prefer it for domains and keep `GEOIP` as a fallback.
 
 ### SearXNG
 

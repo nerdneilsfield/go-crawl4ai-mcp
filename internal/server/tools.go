@@ -22,7 +22,8 @@ import (
 type Options struct {
 	Crawl4AIBaseURL string
 	Crawl4AIToken   string
-	EnableExecuteJS bool // upstream requires CRAWL4AI_EXECUTE_JS_ENABLED=true on its side
+	RouteConfig     string // YAML file routing URLs to several Crawl4AI backends; overrides the two fields above
+	EnableExecuteJS bool   // upstream requires CRAWL4AI_EXECUTE_JS_ENABLED=true on its side
 	EnableAsk       bool
 	SearXNGBaseURL  string // when set, the web_search tool is registered
 }
@@ -42,58 +43,64 @@ const (
 
 // New builds the MCP server with all tools registered.
 func New(opts Options) (*mcp.Server, error) {
-	cl := &c4a.Client{BaseURL: strings.TrimRight(opts.Crawl4AIBaseURL, "/"), Token: opts.Crawl4AIToken}
+	rt := singleRouter(&c4a.Client{BaseURL: strings.TrimRight(opts.Crawl4AIBaseURL, "/"), Token: opts.Crawl4AIToken})
+	if opts.RouteConfig != "" {
+		var err error
+		if rt, err = loadRouter(opts.RouteConfig); err != nil {
+			return nil, err
+		}
+	}
 
 	s := mcp.NewServer(&mcp.Implementation{Name: "crawl4ai-mcp", Version: "0.1.1"}, nil)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        toolMD,
 		Description: "Convert a web page into Markdown. Filters: fit (default, clean readable text), raw (full page), bm25/llm (relevance-filtered, requires q).",
-	}, mdTool(cl))
+	}, mdTool(rt))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        toolHTML,
 		Description: "Crawl a URL and return sanitized HTML preprocessed for schema extraction.",
-	}, htmlTool(cl))
+	}, htmlTool(rt))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        toolCrawl,
 		Description: "Crawl one or more URLs (up to 100) and return Markdown plus metadata per page. Use browser_config/crawler_config for advanced Crawl4AI options; some per-page failures are reported individually.",
-	}, crawlTool(cl))
+	}, crawlTool(rt))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        toolScreenshot,
 		Description: "Capture a full-page PNG screenshot of a URL and return it as an image.",
-	}, screenshotTool(cl))
+	}, screenshotTool(rt))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        toolPDF,
 		Description: "Render a URL to PDF and return it as an application/pdf resource blob.",
-	}, pdfTool(cl))
+	}, pdfTool(rt))
 
 	if opts.EnableExecuteJS {
 		mcp.AddTool(s, &mcp.Tool{
 			Name:        toolExecuteJS,
 			Description: "Execute JavaScript snippets on a page and return the full CrawlResult (markdown, js_execution_result, links, ...). Each script must be an expression that returns a value (IIFE or async function).",
-		}, executeJSTool(cl))
+		}, executeJSTool(rt))
 	}
 
 	if opts.EnableAsk {
 		mcp.AddTool(s, &mcp.Tool{
 			Name:        toolAsk,
 			Description: "Query the Crawl4AI project's own documentation and source context (BM25-filtered). Not a general web Q&A tool.",
-		}, askTool(cl))
+		}, askTool(rt))
 	}
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        toolSubmitCrawl,
 		Description: "Submit an async batch crawl job; returns a task_id for get_crawl_job. Use for long-running crawls.",
-	}, submitCrawlTool(cl))
+	}, submitCrawlTool(rt))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        toolGetCrawlJob,
 		Description: "Poll an async crawl job submitted with submit_crawl. Returns status (processing/completed/failed) and the crawl results once completed.",
-	}, getCrawlJobTool(cl))
+	}, getCrawlJobTool(rt))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        toolCurrentTime,
@@ -257,9 +264,9 @@ func isoWeek(t time.Time) int {
 	return week
 }
 
-func mdTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, mdIn) (*mcp.CallToolResult, mdOut, error) {
+func mdTool(rt *router) func(context.Context, *mcp.CallToolRequest, mdIn) (*mcp.CallToolResult, mdOut, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in mdIn) (*mcp.CallToolResult, mdOut, error) {
-		resp, err := cl.Markdown(ctx, c4a.MDRequest{
+		resp, err := rt.For(ctx, in.URL).Markdown(ctx, c4a.MDRequest{
 			URL: in.URL, F: in.F, Q: in.Q, C: in.C, Provider: in.Provider, Temperature: in.Temperature,
 		})
 		if err != nil {
@@ -271,9 +278,9 @@ func mdTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, mdIn) (*
 	}
 }
 
-func htmlTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, htmlIn) (*mcp.CallToolResult, htmlOut, error) {
+func htmlTool(rt *router) func(context.Context, *mcp.CallToolRequest, htmlIn) (*mcp.CallToolResult, htmlOut, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in htmlIn) (*mcp.CallToolResult, htmlOut, error) {
-		resp, err := cl.HTML(ctx, in.URL)
+		resp, err := rt.For(ctx, in.URL).HTML(ctx, in.URL)
 		if err != nil {
 			return nil, htmlOut{}, err
 		}
@@ -318,13 +325,13 @@ func summarizeCrawl(resp *c4a.CrawlResponse, includeHTML bool) crawlOut {
 	return out
 }
 
-func crawlTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, crawlIn) (*mcp.CallToolResult, crawlOut, error) {
+func crawlTool(rt *router) func(context.Context, *mcp.CallToolRequest, crawlIn) (*mcp.CallToolResult, crawlOut, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in crawlIn) (*mcp.CallToolResult, crawlOut, error) {
 		if len(in.URLs) == 0 {
 			return nil, crawlOut{}, fmt.Errorf("urls must not be empty")
 		}
 		// Respect a crawler_config html passthrough only via explicit flag below.
-		resp, err := cl.Crawl(ctx, c4a.CrawlRequest{
+		resp, err := rt.crawl(ctx, c4a.CrawlRequest{
 			URLs: in.URLs, BrowserConfig: in.BrowserConfig,
 			CrawlerConfig: in.CrawlerConfig, CrawlerConfigs: in.CrawlerConfigs,
 		})
@@ -335,9 +342,9 @@ func crawlTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, crawl
 	}
 }
 
-func screenshotTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, screenshotIn) (*mcp.CallToolResult, any, error) {
+func screenshotTool(rt *router) func(context.Context, *mcp.CallToolRequest, screenshotIn) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in screenshotIn) (*mcp.CallToolResult, any, error) {
-		resp, err := cl.Screenshot(ctx, c4a.ScreenshotRequest{
+		resp, err := rt.For(ctx, in.URL).Screenshot(ctx, c4a.ScreenshotRequest{
 			URL: in.URL, ScreenshotWaitFor: in.ScreenshotWaitFor, WaitForImages: in.WaitForImages,
 		})
 		if err != nil {
@@ -360,9 +367,9 @@ func screenshotTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, 
 	}
 }
 
-func pdfTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, pdfIn) (*mcp.CallToolResult, any, error) {
+func pdfTool(rt *router) func(context.Context, *mcp.CallToolRequest, pdfIn) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in pdfIn) (*mcp.CallToolResult, any, error) {
-		resp, err := cl.PDF(ctx, in.URL)
+		resp, err := rt.For(ctx, in.URL).PDF(ctx, in.URL)
 		if err != nil {
 			return nil, any(nil), err
 		}
@@ -386,9 +393,9 @@ func pdfTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, pdfIn) 
 	}
 }
 
-func executeJSTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, executeJSIn) (*mcp.CallToolResult, any, error) {
+func executeJSTool(rt *router) func(context.Context, *mcp.CallToolRequest, executeJSIn) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in executeJSIn) (*mcp.CallToolResult, any, error) {
-		r, err := cl.ExecuteJS(ctx, c4a.ExecuteJSRequest{URL: in.URL, Scripts: in.Scripts})
+		r, err := rt.For(ctx, in.URL).ExecuteJS(ctx, c4a.ExecuteJSRequest{URL: in.URL, Scripts: in.Scripts})
 		if err != nil {
 			return nil, any(nil), err
 		}
@@ -403,9 +410,9 @@ func executeJSTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, e
 	}
 }
 
-func askTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, askIn) (*mcp.CallToolResult, any, error) {
+func askTool(rt *router) func(context.Context, *mcp.CallToolRequest, askIn) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in askIn) (*mcp.CallToolResult, any, error) {
-		resp, err := cl.Ask(ctx, in.Query, in.ContextType, in.ScoreRatio, in.MaxResults)
+		resp, err := rt.fallback().Ask(ctx, in.Query, in.ContextType, in.ScoreRatio, in.MaxResults)
 		if err != nil {
 			return nil, any(nil), err
 		}
@@ -430,9 +437,9 @@ func askTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, askIn) 
 	}
 }
 
-func submitCrawlTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, submitCrawlIn) (*mcp.CallToolResult, jobOut, error) {
+func submitCrawlTool(rt *router) func(context.Context, *mcp.CallToolRequest, submitCrawlIn) (*mcp.CallToolResult, jobOut, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in submitCrawlIn) (*mcp.CallToolResult, jobOut, error) {
-		id, err := cl.SubmitCrawlJob(ctx, c4a.CrawlJobRequest{
+		id, err := rt.submit(ctx, c4a.CrawlJobRequest{
 			URLs: in.URLs, BrowserConfig: in.BrowserConfig, CrawlerConfig: in.CrawlerConfig,
 		})
 		if err != nil {
@@ -442,9 +449,9 @@ func submitCrawlTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest,
 	}
 }
 
-func getCrawlJobTool(cl *c4a.Client) func(context.Context, *mcp.CallToolRequest, getCrawlJobIn) (*mcp.CallToolResult, crawlJobOut, error) {
+func getCrawlJobTool(rt *router) func(context.Context, *mcp.CallToolRequest, getCrawlJobIn) (*mcp.CallToolResult, crawlJobOut, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in getCrawlJobIn) (*mcp.CallToolResult, crawlJobOut, error) {
-		st, err := cl.CrawlJob(ctx, in.TaskID)
+		st, err := rt.job(ctx, in.TaskID)
 		if err != nil {
 			return nil, crawlJobOut{}, err
 		}
