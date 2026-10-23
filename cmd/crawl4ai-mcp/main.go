@@ -32,6 +32,7 @@ type config struct {
 	mcpToken     string
 	searxngURL   string
 	deepseekKey  string
+	deepseekURL  string
 	searchProv   string
 	enableJS     bool
 	enableAsk    bool
@@ -110,6 +111,7 @@ func rootCmd() *cobra.Command {
 	pf.StringVar(&cfg.mcpToken, "mcp-token", os.Getenv("MCP_TOKEN"), "bearer token for MCP clients; empty disables auth")
 	pf.StringVar(&cfg.searxngURL, "searxng-url", envOr("SEARXNG_URL", ""), "SearXNG base URL; registers web_search when set")
 	pf.StringVar(&cfg.deepseekKey, "deepseek-api-key", os.Getenv("DEEPSEEK_API_KEY"), "DeepSeek Search API key; enables the DeepSeek web_search backend")
+	pf.StringVar(&cfg.deepseekURL, "deepseek-url", envOr("DEEPSEEK_URL", "https://api.deepseek.com"), "DeepSeek API base URL (override for proxies/compat endpoints)")
 	pf.StringVar(&cfg.searchProv, "search-provider", envOr("SEARCH_PROVIDER", "auto"), "web_search backend: auto (DeepSeek if key set, else SearXNG), deepseek, searxng")
 	pf.BoolVar(&cfg.enableJS, "enable-execute-js", envBool("ENABLE_EXECUTE_JS", false), "expose execute_js tool")
 	pf.BoolVar(&cfg.enableAsk, "enable-ask", envBool("ENABLE_ASK", true), "expose ask tool")
@@ -131,6 +133,7 @@ func run(cmd *cobra.Command, cfg *config) error {
 		EnableAsk:       cfg.enableAsk,
 		SearXNGBaseURL:  strings.TrimRight(cfg.searxngURL, "/"),
 		DeepSeekAPIKey:  cfg.deepseekKey,
+		DeepSeekBaseURL: strings.TrimRight(cfg.deepseekURL, "/"),
 		SearchProvider:  cfg.searchProv,
 	})
 	if err != nil {

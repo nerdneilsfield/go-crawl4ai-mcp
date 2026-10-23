@@ -151,6 +151,7 @@ Command-line flags take precedence over environment variables.
 | `--crawl-timeout` | `CRAWL_TIMEOUT` | `90s` | per-call upstream timeout. Accepts Go durations (`2m`) or bare seconds (`120`); `0` disables. Applies to Crawl4AI calls only, not web search |
 | `--searxng-url` | `SEARXNG_URL` | empty | SearXNG base URL; enables the SearXNG backend of `web_search` |
 | `--deepseek-api-key` | `DEEPSEEK_API_KEY` | empty | DeepSeek Search API key; enables the DeepSeek backend of `web_search` |
+| `--deepseek-url` | `DEEPSEEK_URL` | `https://api.deepseek.com` | DeepSeek API base URL; override for proxies or OpenAI-compatible gateways |
 | `--search-provider` | `SEARCH_PROVIDER` | `auto` | `web_search` backend: `auto`, `deepseek` or `searxng` ([see below](#search-providers)) |
 | `--enable-execute-js` | `ENABLE_EXECUTE_JS` | `false` | expose `execute_js` |
 | `--enable-ask` | `ENABLE_ASK` | `true` | expose `ask` |
