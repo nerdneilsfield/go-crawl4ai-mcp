@@ -66,3 +66,33 @@ changelog:
       - "^docs:"
       - "^test:"
       - "^chore:"
+
+# Publish to the nerdneilsfield/homebrew-apps tap and Scoop bucket.
+homebrew_casks:
+  - name: crawl4ai-mcp
+    homepage: https://github.com/nerdneilsfield/go-crawl4ai-mcp
+    description: Stateless Streamable HTTP MCP server for Crawl4AI
+    binaries:
+      - crawl4ai-mcp
+    directory: Casks
+    repository:
+      owner: nerdneilsfield
+      name: homebrew-apps
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    hooks:
+      post:
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/crawl4ai-mcp"]
+          end
+
+scoops:
+  - name: crawl4ai-mcp
+    homepage: https://github.com/nerdneilsfield/go-crawl4ai-mcp
+    description: Stateless Streamable HTTP MCP server for Crawl4AI
+    license: MIT
+    directory: bucket
+    repository:
+      owner: nerdneilsfield
+      name: homebrew-apps
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
