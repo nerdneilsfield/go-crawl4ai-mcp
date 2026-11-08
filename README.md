@@ -15,6 +15,19 @@ MCP client ── MCP_TOKEN ──> go-crawl4ai-mcp :8080 ── CRAWL4AI_TOKEN 
 - A running Crawl4AI server (0.9.x) with its REST API reachable. The upstream container must set `CRAWL4AI_API_TOKEN` if you want authenticated upstream calls.
 - Optional, for `web_search`: a DeepSeek API key, or a SearXNG instance with the JSON output format enabled.
 
+## Homebrew / Scoop
+
+```bash
+# macOS / Linux
+brew install --cask nerdneilsfield/apps/crawl4ai-mcp
+```
+
+```powershell
+# Windows
+scoop bucket add nerdneilsfield https://github.com/nerdneilsfield/homebrew-apps
+scoop install nerdneilsfield/crawl4ai-mcp
+```
+
 ## Quick start
 
 1. Build and run:
